@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "find-agents-md": {
+      "command": "npx",
+      "args": ["@aki77/find-agents-md"]
+    }
+  }
+}

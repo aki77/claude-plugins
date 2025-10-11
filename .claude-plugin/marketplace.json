@@ -1,0 +1,14 @@
+{
+  "name": "claude-plugins",
+  "owner": {
+    "name": "aki77",
+    "email": "aki77@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "claude-md-compliance",
+      "source": "./plugins/claude-md-compliance",
+      "description": "Plugin for checking code compliance with CLAUDE.md guidelines and automatic fixes"
+    }
+  ]
+}
