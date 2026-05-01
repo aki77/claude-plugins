@@ -9,6 +9,11 @@
       "name": "claude-md-compliance",
       "source": "./plugins/claude-md-compliance",
       "description": "Plugin for checking code compliance with CLAUDE.md guidelines and automatic fixes"
+    },
+    {
+      "name": "code-review",
+      "source": "./plugins/code-review",
+      "description": "Plugin for multi-agent PR code review workflow"
     }
   ]
 }
