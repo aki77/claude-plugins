@@ -98,7 +98,7 @@ disable-model-invocation: true
 
    1. `mcp__github__create_pending_pull_request_review` で pending レビューを作成する。
    2. ステップ6で確定した各課題について `mcp__github__add_comment_to_pending_review` でインラインコメントを追加する。課題ゼロの場合はこのステップをスキップする。
-      - 単一行の修正: `line` に対象行番号、`subjectType: "LINE"` を指定する。
+      - 単一行の修正: `line` に対象行番号、`subjectType: "LINE"` のみを指定する。`startLine` / `startSide` / `side` は指定しないこと。
       - 複数行の修正: `startLine` と `line` で範囲を指定し、`startSide: "RIGHT"`、`side: "RIGHT"`、`subjectType: "LINE"` を指定する（追加された行が対象の場合）。`startLine` から `line` までの範囲がハイライトされ、その範囲全体が suggestion の内容で置き換えられる。
       - `body` の方針:
         - 課題の概要を簡潔に記述する
