@@ -1,7 +1,7 @@
 ---
 name: code-review
 description: 指定されたGitHubプルリクエストに対して、複数の専門エージェント（CLAUDE.md準拠/バグ検出/REVIEW.md準拠）を並列起動して多角的なコードレビューを実施するスキル。
-allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh pr list:*), mcp__github__create_pending_pull_request_review, mcp__github__add_comment_to_pending_review, mcp__github__submit_pending_pull_request_review
+allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(node:*), mcp__github__create_pending_pull_request_review, mcp__github__add_comment_to_pending_review, mcp__github__submit_pending_pull_request_review
 disable-model-invocation: true
 ---
 
@@ -23,23 +23,28 @@ disable-model-invocation: true
 
    「レビュー済みかつ追加コミットなし」の判定手順:
    1. `gh pr view <PR> --json commits,reviews` を実行する
-   2. `reviews` から Claude による最新レビューの `submittedAt` を取得する
+   2. `reviews` から Claude による最新レビューの `submittedAt` を取得する。Claudeによるレビューは `author.login` が `claude[bot]` であるものを対象とする。
    3. `commits` から最新コミットの `committedDate` を取得する
    4. Claudeの最新レビューの `submittedAt` が最新コミットの `committedDate` 以降であればスキップする
    5. Claudeのレビューが存在しない、またはレビュー以降に新しいコミットがある場合はスキップせずレビューを継続する
 
    注: Claudeが生成したPRであってもレビューは実施する（著者がClaudeであることはスキップ理由にならない）。
 
-2. Haikuエージェントを起動し、関連するすべてのCLAUDE.mdファイルのパス一覧（中身ではなくパスのみ）を返す。対象は以下:
-   - ルート直下のCLAUDE.md（存在する場合）
-   - PRで変更されたファイルを含むディレクトリ配下のCLAUDE.mdファイル
+2. `node ${CLAUDE_PLUGIN_ROOT}/skills/code-review/scripts/collect-rules.mjs <PR>` を実行して、PRに関連するプロジェクトルールファイル一覧をJSONで取得する。スクリプトは標準出力に以下を出力する:
+   - `claudeMd`: CLAUDE.mdのパス一覧（ルート直下、およびPR変更ファイルを含むディレクトリ・その祖先ディレクトリ配下）
+   - `rules`: `.claude/rules/` 配下のルールファイル一覧。各エントリは `path` と `paths`（frontmatterの値、未指定の場合は `null`）を持つ。`paths:` が未指定のもの（全ファイル適用）と、PR変更ファイルのいずれかが `paths:` のglobパターンに一致するものが含まれる。
 
-3. Sonnetエージェントを起動し、プルリクエストを参照して変更内容のサマリを返す。
+3. Sonnetエージェントを起動し、プルリクエストを参照して変更内容のサマリを返す。ステップ2と並列で実行してよい（ステップ2の結果に依存しない）。
 
 4. 5つのエージェントを並列で起動し、変更内容を独立してレビューする。各エージェントは、課題の説明と指摘理由（例: 「CLAUDE.md準拠」「バグ」「REVIEW.md準拠」）を含む課題リストを返す。各エージェントの役割は以下の通り:
 
-   エージェント1, 2: CLAUDE.md準拠チェック（Sonnet）
-   並列でCLAUDE.md準拠を監査する。注: あるファイルのCLAUDE.md準拠を評価する際は、そのファイルまたはその親ディレクトリに存在するCLAUDE.mdのみを対象とすること。
+   エージェント1, 2: プロジェクトルール準拠チェック（Sonnet）
+   変更ファイルを半分ずつ分担し、並列でプロジェクトルール（CLAUDE.md および `.claude/rules/` 配下のルールファイル）への準拠を監査する（例: 変更ファイルが6つなら、エージェント1が最初の3ファイル、エージェント2が残り3ファイルを担当）。注: あるファイルのルール準拠を評価する際は、以下のみを対象とすること:
+   - そのファイルまたはその親ディレクトリに存在するCLAUDE.md
+   - ステップ2で収集された `.claude/rules/` のルールファイルのうち、`paths` が `null`（frontmatter未指定。全ファイル適用）のもの
+   - ステップ2で収集された `.claude/rules/` のルールファイルのうち、`paths` のglobパターンが対象ファイルのパスに一致するもの
+
+   `paths` で指定されたglobパターンに一致しないファイルに対して、そのルールを適用しないこと。
 
    エージェント3: バグ検出（Opus、エージェント4と並列）
    明らかなバグを探す。diffの内容のみに注目し、追加コンテキストの読み込みは行わない。重大なバグのみを指摘し、些細な指摘や誤検知の可能性が高いものは無視する。git diff外のコンテキストを参照しないと判断できない指摘は行わないこと。
@@ -69,7 +74,7 @@ disable-model-invocation: true
    **重要: 高シグナルな指摘のみを対象とする。** 以下に該当する指摘のみを行うこと:
    - コードがコンパイル/パースに失敗する（構文エラー、型エラー、import漏れ、未定義参照など)
    - 入力に関わらず明らかに誤った結果を返す（明確なロジックエラー）
-   - 該当ルールを引用できる、明白かつ明確なCLAUDE.md違反
+   - 該当ルールを引用できる、明白かつ明確なプロジェクトルール（CLAUDE.md または `.claude/rules/`）違反
 
    以下は指摘しないこと:
    - コードスタイルや品質に関する懸念
@@ -80,13 +85,13 @@ disable-model-invocation: true
 
    各サブエージェントには、PRタイトルと説明文を併せて渡す。これにより著者の意図を踏まえたレビューが可能になる。
 
-5. ステップ4でエージェント1〜5が検出した各課題について、検証用のサブエージェントを並列起動する。各サブエージェントには、PRタイトル・説明文と課題の概要を渡す。サブエージェントの役割は、提示された課題が高い確度で実際の問題であるかを検証すること。例えば「変数が未定義」と指摘された場合、コード上で実際にそれが正しいかを確認する。CLAUDE.md違反およびREVIEW.md違反の場合は、該当ルールがそのファイルに適用されるスコープであるか、かつ実際に違反しているかを検証する。バグ・ロジック系（エージェント3, 4由来）の検証にはOpusサブエージェントを、CLAUDE.md違反（エージェント1, 2由来）およびREVIEW.md違反（エージェント5由来）の検証にはSonnetエージェントを使用する。
+5. ステップ4でエージェント1〜5が検出した各課題について、検証用のサブエージェントを並列起動する。各サブエージェントには、PRタイトル・説明文と課題の概要を渡す。サブエージェントの役割は、提示された課題が高い確度で実際の問題であるかを検証すること。例えば「変数が未定義」と指摘された場合、コード上で実際にそれが正しいかを確認する。プロジェクトルール違反（CLAUDE.md および `.claude/rules/`）および REVIEW.md 違反の場合は、該当ルールがそのファイルに適用されるスコープであるか（`.claude/rules/` の場合は `paths` に一致するか）、かつ実際に違反しているかを検証する。バグ・ロジック系（エージェント3, 4由来）の検証にはOpusサブエージェントを、プロジェクトルール違反（エージェント1, 2由来）およびREVIEW.md違反（エージェント5由来）の検証にはSonnetエージェントを使用する。
 
 6. ステップ5で検証されなかった課題は除外する。これにより最終的な高シグナル課題リストが得られる。
 
 7. レビュー結果のサマリをターミナルに出力する:
    - 課題が見つかった場合は、それぞれの簡潔な説明を一覧表示する。
-   - 課題が見つからなかった場合は、「問題は見つかりませんでした。バグ・CLAUDE.md準拠・REVIEW.md準拠を確認しました。」と表示する。
+   - 課題が見つからなかった場合は、「問題は見つかりませんでした。バグ・プロジェクトルール（CLAUDE.md / .claude/rules/）準拠・REVIEW.md準拠を確認しました。」と表示する。
 
    `--comment` 引数が指定されていない場合は、ここで処理を停止する。GitHubへの投稿は行わないこと。
 
@@ -107,7 +112,7 @@ disable-model-invocation: true
         - 該当suggestionをコミットするだけで課題が完全に解消する場合に限り、コミット可能なsuggestionを投稿する。追加対応が必要な場合はsuggestionブロックを付けないこと。
    3. `mcp__github__submit_pending_pull_request_review` を `event: "COMMENT"` で送信する。`body` にはレビュー全体のサマリを含める:
       - 課題が見つかった場合: 検出した課題の概要を記述する。
-      - 課題が見つからなかった場合: 「問題は見つかりませんでした。バグ・CLAUDE.md準拠・REVIEW.md準拠を確認しました。」と記述する。
+      - 課題が見つからなかった場合: 「問題は見つかりませんでした。バグ・プロジェクトルール（CLAUDE.md / .claude/rules/）準拠・REVIEW.md準拠を確認しました。」と記述する。
 
    **重要: 同一課題につき1コメントのみ投稿する。重複コメントを投稿しないこと。**
 
@@ -117,14 +122,14 @@ disable-model-invocation: true
 - バグに見えるが実際は正しい挙動
 - シニアエンジニアであれば指摘しないような細かすぎる指摘
 - リンタが検出する類の問題（リンタを実際に走らせて検証することは不要）
-- CLAUDE.mdで明示的に求められていない、一般的なコード品質の懸念（テストカバレッジ不足、一般的なセキュリティ懸念など）
-- CLAUDE.mdに記載があっても、コード側で明示的に抑制されている事項（lintのignoreコメントなど）
+- プロジェクトルール（CLAUDE.md / .claude/rules/）で明示的に求められていない、一般的なコード品質の懸念（テストカバレッジ不足、一般的なセキュリティ懸念など）
+- プロジェクトルール（CLAUDE.md / .claude/rules/）に記載があっても、コード側で明示的に抑制されている事項（lintのignoreコメントなど）
 
 備考:
 
 - GitHubとのやり取り（PR取得、コメント作成など）には gh CLI を使用すること。web fetch は使用しない。
 - 開始前にtodoリストを作成すること。
-- インラインコメントには各課題の引用元へのリンクを必ず含めること（例: CLAUDE.mdに言及する場合はそのファイルへのリンクを含める）。
+- インラインコメントには各課題の引用元へのリンクを必ず含めること（例: CLAUDE.mdや `.claude/rules/` 配下のルールファイルに言及する場合はそのファイルへのリンクを含める）。
 - インラインコメント内でコードへリンクする際は、以下の形式を厳密に守ること。守らないとMarkdownプレビューが正しくレンダリングされない: https://github.com/anthropics/claude-code/blob/c21d3c10bc8e898b7ac1a2d745bdc9bc4e423afe/package.json#L10-L15
   - フルのgit shaが必要
   - フルのshaを直接記述すること。`https://github.com/owner/repo/blob/$(git rev-parse HEAD)/foo/bar` のようなコマンド埋め込みはMarkdownでそのまま描画されるため動作しない。
