@@ -19,6 +19,11 @@
       "name": "rules-on-create",
       "source": "./plugins/rules-on-create",
       "description": "Plugin that makes path-based rules in .claude/rules/ and CLAUDE.md apply on file creation (Write), not only on Read"
+    },
+    {
+      "name": "auto-simplify-hook",
+      "source": "./plugins/auto-simplify-hook",
+      "description": "Stop hook that blocks completion when there are 10+ changed lines and /simplify has not been run"
     }
   ]
 }

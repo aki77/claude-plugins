@@ -37,6 +37,22 @@ A plugin that makes path-based rules in `.claude/rules/` (with `paths:` frontmat
 
 See [plugins/rules-on-create](plugins/rules-on-create) for more details.
 
+### auto-simplify-hook
+
+A plugin that blocks Claude from stopping when there are 10+ changed lines and `/simplify` has not been run in the current session. Encourages code simplification before finishing a task.
+
+**How it works:**
+- Stop hook checks `git diff HEAD --numstat` to count changed lines (added + deleted)
+- If changes are 10 lines or more and `/simplify` is not found in the transcript, returns `decision: block`
+- Skips when `stop_hook_active` is `true` to prevent infinite loops
+- Skips in non-git directories
+
+**Prerequisites:**
+- `jq` available on `PATH`
+- `git` available on `PATH`
+
+See [plugins/auto-simplify-hook](plugins/auto-simplify-hook) for more details.
+
 ## Installation
 
 ### Prerequisites
