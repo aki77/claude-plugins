@@ -1,0 +1,17 @@
+{
+  "description": "新規ファイル作成時に空ファイルを生成して Write を deny し、Read を強制することでパスベースのルールを context に注入させる",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-write-force-read.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

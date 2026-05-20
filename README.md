@@ -23,6 +23,20 @@ A plugin for checking code compliance with CLAUDE.md guidelines and automatic fi
 
 See [plugins/claude-md-compliance](plugins/claude-md-compliance) for more details.
 
+### rules-on-create
+
+A plugin that makes path-based rules in `.claude/rules/` (with `paths:` frontmatter) and path-targeted instructions in CLAUDE.md apply when Claude **creates** a new file, not only when it reads one. Works around [anthropics/claude-code#23478](https://github.com/anthropics/claude-code/issues/23478).
+
+**How it works:**
+- PreToolUse hook on `Write` intercepts writes to non-existing files
+- Creates the file empty, then denies the Write with a reason telling Claude to Read it first
+- After Read, path-based rules are injected; Claude then Writes/Edits with rules in context
+
+**Prerequisites:**
+- `jq` available on `PATH`
+
+See [plugins/rules-on-create](plugins/rules-on-create) for more details.
+
 ## Installation
 
 ### Prerequisites
