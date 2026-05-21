@@ -20,7 +20,7 @@ Node.js プロジェクトで、プロジェクトが使っているパッケー
 
 ```
 /plugin marketplace add aki77/claude-plugins
-/plugin install package-manager-enforcer@aki77/claude-plugins
+/plugin install package-manager-enforcer@plugin-hub
 ```
 
 インストール後は Claude Code を再起動してください。
