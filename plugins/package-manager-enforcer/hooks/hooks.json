@@ -1,0 +1,16 @@
+{
+  "description": "Bash 実行前に Node.js プロジェクトのパッケージマネージャーと実行コマンドの一致を検査する",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/package-manager-enforcer.mjs"
+          }
+        ]
+      }
+    ]
+  }
+}

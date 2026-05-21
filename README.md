@@ -37,6 +37,21 @@ A plugin that makes path-based rules in `.claude/rules/` (with `paths:` frontmat
 
 See [plugins/rules-on-create](plugins/rules-on-create) for more details.
 
+### package-manager-enforcer
+
+A plugin that blocks Claude from running a package manager command that does not match the project's detected package manager (e.g. running `npm install` in a `pnpm`-based project).
+
+**How it works:**
+- PreToolUse hook on `Bash` intercepts every Bash command
+- Detects the project's package manager from `package.json#packageManager` field or lock file
+- Blocks with exit 2 when the command's manager differs from the detected one
+- `npx` is always allowed; non-package-manager commands pass through
+
+**Prerequisites:**
+- `node` available on `PATH`
+
+See [plugins/package-manager-enforcer](plugins/package-manager-enforcer) for more details.
+
 ### auto-simplify-hook
 
 A plugin that blocks Claude from stopping when there are 10+ changed lines and `/simplify` has not been run in the current session. Encourages code simplification before finishing a task.

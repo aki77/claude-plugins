@@ -1,0 +1,18 @@
+{
+  "name": "package-manager-enforcer",
+  "version": "0.1.0",
+  "description": "Bash 実行時に package.json の packageManager フィールドまたはロックファイルから推定したパッケージマネージャーと、実行しようとしているコマンド (npm/yarn/pnpm) が一致しない場合にブロックするプラグイン",
+  "author": {
+    "name": "aki77",
+    "email": "aki77@users.noreply.github.com"
+  },
+  "keywords": [
+    "hooks",
+    "pre-tool-use",
+    "bash",
+    "package-manager",
+    "npm",
+    "yarn",
+    "pnpm"
+  ]
+}
