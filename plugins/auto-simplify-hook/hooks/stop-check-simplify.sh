@@ -20,7 +20,7 @@ CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // "."')
 git -C "$CWD" rev-parse --is-inside-work-tree > /dev/null 2>&1 || exit 0
 
 # git diff HEAD --numstat の追加・削除行数の合計を計算
-DIFF_OUTPUT=$(git -C "$CWD" diff HEAD --numstat 2>/dev/null || true)
+DIFF_OUTPUT=$(git -C "$CWD" diff --numstat 2>/dev/null || true)
 
 if [[ -z "$DIFF_OUTPUT" ]]; then
   exit 0
