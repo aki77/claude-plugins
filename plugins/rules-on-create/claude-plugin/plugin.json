@@ -1,6 +1,6 @@
 {
   "name": "rules-on-create",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "新規ファイル作成時に .claude/rules/ のパス指定ルールや CLAUDE.md のパス指定指示が読み込まれない問題を回避するプラグイン。ルールが該当するケースのみ PreToolUse(Write) フックで空ファイルを生成して Read を強制する。",
   "author": {
     "name": "aki77",
