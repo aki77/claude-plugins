@@ -19,8 +19,17 @@ CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // "."')
 # gitリポジトリ確認（失敗時はスキップ）
 git -C "$CWD" rev-parse --is-inside-work-tree > /dev/null 2>&1 || exit 0
 
-# git diff HEAD --numstat の追加・削除行数の合計を計算
-DIFF_OUTPUT=$(git -C "$CWD" diff --numstat 2>/dev/null || true)
+# /simplify はコード簡素化が目的のため、ドキュメント・設定・ロック・データ/画像は集計から除外
+EXCLUDES=(
+  ':(exclude)*.md' ':(exclude)*.mdx' ':(exclude)*.txt' ':(exclude)*.rst' ':(exclude)*.adoc'
+  ':(exclude)*.yml' ':(exclude)*.yaml' ':(exclude)*.json' ':(exclude)*.toml' ':(exclude)*.ini'
+  ':(exclude)*.lock' ':(exclude)*.lockb' ':(exclude)*-lock.json' ':(exclude)*-lock.yaml'
+  ':(exclude)*.csv' ':(exclude)*.tsv'
+  ':(exclude)*.svg' ':(exclude)*.png' ':(exclude)*.jpg' ':(exclude)*.jpeg'
+  ':(exclude)*.gif' ':(exclude)*.webp' ':(exclude)*.ico' ':(exclude)*.snap'
+)
+# git diff --numstat の追加・削除行数の合計を計算
+DIFF_OUTPUT=$(git -C "$CWD" diff --numstat -- . "${EXCLUDES[@]}" 2>/dev/null || true)
 
 if [[ -z "$DIFF_OUTPUT" ]]; then
   exit 0
