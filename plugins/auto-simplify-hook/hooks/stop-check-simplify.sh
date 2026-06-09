@@ -50,5 +50,5 @@ fi
 # blockレスポンスを返す
 jq -n --argjson lines "$TOTAL_LINES" '{
   decision: "block",
-  reason: ("/simplify を実行してからコードレビューを完了してください（" + ($lines | tostring) + "行以上の変更があります）")
+  reason: ("/simplify コマンドを実行してください（" + ($lines | tostring) + "行以上の変更があります）")
 }'

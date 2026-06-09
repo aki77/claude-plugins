@@ -1,6 +1,6 @@
 {
   "name": "auto-simplify-hook",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Stopイベント時にgit diffの変更行数が10行以上かつ /simplify 未実行の場合にブロックし、コードのシンプル化を促すプラグイン",
   "author": {
     "name": "aki77",
