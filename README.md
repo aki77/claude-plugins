@@ -8,21 +8,6 @@ This repository provides plugins that extend Claude Code's functionality. Each p
 
 ## Plugins
 
-### claude-md-compliance
-
-A plugin for checking code compliance with CLAUDE.md guidelines and automatic fixes.
-
-**Features:**
-- Code review based on project's CLAUDE.md guidelines
-- Automatic detection and fixing of guideline violations
-- Batch review of uncommitted changes
-
-**Commands:**
-- `/claude-md-compliance:claude-md-fix [filename]` - Automatically fix guideline violations in the specified file
-- `/claude-md-compliance:claude-md-review` - Review uncommitted changes and fix them as needed
-
-See [plugins/claude-md-compliance](plugins/claude-md-compliance) for more details.
-
 ### rules-on-create
 
 A plugin that makes path-based rules in `.claude/rules/` (with `paths:` frontmatter) and path-targeted instructions in CLAUDE.md apply when Claude **creates** a new file, not only when it reads one. Works around [anthropics/claude-code#23478](https://github.com/anthropics/claude-code/issues/23478).
