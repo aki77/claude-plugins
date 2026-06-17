@@ -6,6 +6,7 @@ import path from "node:path";
 const SESSIONS_FILE = path.join(os.tmpdir(), "plan-rule-review-sessions.json");
 const TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MAX_REVIEWS = 2;
+const PASSED_MARKER = "<!-- plan-rule-review: passed -->";
 
 async function readStdin() {
   const chunks = [];
@@ -61,8 +62,12 @@ function buildReason() {
     "   - 該当ルールを引用できる、明白かつ明確な違反のみを高シグナルな指摘として扱う。",
     "   - 確信が持てない指摘は行わない。",
     "3. 違反があればプランを具体的に修正する。指摘時は該当ルールの引用元（ファイルパス）を明示する。",
-    "4. レビュー・修正が済んだら、再度 ExitPlanMode を呼ぶ。",
-    "   違反がなければプランをそのままに ExitPlanMode を呼べばよい（一定回数レビュー後は自動的に許可される）。",
+    "4. レビュー結果に応じて再度 ExitPlanMode を呼ぶ:",
+    `   - 違反がなければ、プランの末尾に「${PASSED_MARKER}」を追記してから ExitPlanMode を呼ぶ。`,
+    "     このマーカーがあると以降のレビューがスキップされ、即座に承認に進む。",
+    "   - 違反があれば、プランを修正したうえで（マーカーは付けずに）ExitPlanMode を呼ぶ。",
+    "   注意: マーカーはレビューを完了し違反がないことを確認した場合のみ付けること。",
+    "   違反が残るプランにマーカーを付けてはならない。",
   ].join("\n");
 }
 
@@ -78,6 +83,9 @@ async function main() {
 
   const plan = payload?.tool_input?.plan;
   if (!plan || typeof plan !== "string") process.exit(0);
+
+  // レビュー済み・違反なしのマーカーがあれば即許可（session I/O より前に判定）
+  if (plan.includes(PASSED_MARKER)) process.exit(0);
 
   const sessionId = payload?.session_id;
   if (!sessionId || typeof sessionId !== "string") process.exit(0);
