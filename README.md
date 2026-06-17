@@ -52,6 +52,25 @@ A plugin that blocks Claude from running a package manager command that does not
 
 See [plugins/package-manager-enforcer](plugins/package-manager-enforcer) for more details.
 
+### plan-rule-review
+
+A plugin that reviews the plan for compliance with project rules (CLAUDE.md / `.claude/rules/`) before allowing Plan Mode to exit. Helps catch rule violations before implementation begins.
+
+**How it works:**
+- PreToolUse hook on `ExitPlanMode` intercepts plan finalization
+- Denies exit and injects review instructions into Claude's context
+- Claude reads CLAUDE.md and `.claude/rules/` files and reviews the plan for violations
+- If violations are found, Claude revises the plan and retries `ExitPlanMode`
+- After the configured number of reviews (default: 2), exit is always allowed
+
+**Prerequisites:**
+- `node` available on `PATH`
+
+**Configuration:**
+- `PLAN_RULE_REVIEW_MAX` — max reviews per session (default: `2`; set to `0` to disable)
+
+See [plugins/plan-rule-review](plugins/plan-rule-review) for more details.
+
 ### auto-simplify-hook
 
 A plugin that blocks Claude from stopping when there are 10+ changed lines and `/simplify` has not been run in the current session. Encourages code simplification before finishing a task.

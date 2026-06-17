@@ -29,6 +29,11 @@
       "name": "package-manager-enforcer",
       "source": "./plugins/package-manager-enforcer",
       "description": "Plugin that blocks mismatched package manager commands by detecting the correct package manager from package.json packageManager field or lock files"
+    },
+    {
+      "name": "plan-rule-review",
+      "source": "./plugins/plan-rule-review",
+      "description": "PreToolUse(ExitPlanMode) hook that reviews the plan for compliance with project rules (CLAUDE.md / .claude/rules/) before allowing exit"
     }
   ]
 }

@@ -1,0 +1,17 @@
+{
+  "description": "ExitPlanMode 時にプランのプロジェクトルール準拠を Claude 本体にレビューさせる",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/review-plan.mjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

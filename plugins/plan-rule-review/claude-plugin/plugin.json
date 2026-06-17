@@ -1,0 +1,17 @@
+{
+  "name": "plan-rule-review",
+  "version": "0.1.0",
+  "description": "ExitPlanMode 時にプランがプロジェクトルール（CLAUDE.md / .claude/rules/）に準拠しているかを PreToolUse フックでレビューさせるプラグイン。違反があれば deny してプラン修正を促し、セッションあたり最大 N 回レビューする。",
+  "author": {
+    "name": "aki77",
+    "email": "aki77@users.noreply.github.com"
+  },
+  "keywords": [
+    "hooks",
+    "pre-tool-use",
+    "exit-plan-mode",
+    "plan-mode",
+    "rules",
+    "claude-md"
+  ]
+}
