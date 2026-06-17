@@ -1,84 +1,84 @@
 # Claude Plugins
 
-A collection of custom plugins for Claude Code.
+Claude Code 用のカスタムプラグインコレクションです。
 
-## Overview
+## 概要
 
-This repository provides plugins that extend Claude Code's functionality. Each plugin offers unique features to enhance your development workflow.
+このリポジトリは Claude Code の機能を拡張するプラグインを提供します。各プラグインは開発ワークフローを強化する独自の機能を備えています。
 
-## Plugins
+## プラグイン一覧
 
 ### rules-on-create
 
-A plugin that makes path-based rules in `.claude/rules/` (with `paths:` frontmatter) and path-targeted instructions in CLAUDE.md apply when Claude **creates** a new file, not only when it reads one. Works around [anthropics/claude-code#23478](https://github.com/anthropics/claude-code/issues/23478).
+`.claude/rules/` 内のパスベースルール（`paths:` フロントマターあり）と CLAUDE.md のパス指定インストラクションを、ファイル読み込み時だけでなく Claude が**新規ファイルを作成**するときにも適用させるプラグインです。[anthropics/claude-code#23478](https://github.com/anthropics/claude-code/issues/23478) のワークアラウンドです。
 
-**How it works:**
-- PreToolUse hook on `Write` intercepts writes to non-existing files
-- Creates the file empty, then denies the Write with a reason telling Claude to Read it first
-- After Read, path-based rules are injected; Claude then Writes/Edits with rules in context
+**動作の仕組み:**
+- `Write` への PreToolUse フックが、存在しないファイルへの書き込みをインターセプト
+- ファイルを空で作成し、先に Read するよう Claude に指示して Write を拒否
+- Read 後にパスベースのルールが注入され、Claude はルールをコンテキストに持った状態で Write/Edit を実行
 
-**Prerequisites:**
-- `jq` available on `PATH`
+**前提条件:**
+- `jq` が `PATH` に存在すること
 
-See [plugins/rules-on-create](plugins/rules-on-create) for more details.
+詳細は [plugins/rules-on-create](plugins/rules-on-create) を参照してください。
 
 ### package-manager-enforcer
 
-A plugin that blocks Claude from running a package manager command that does not match the project's detected package manager (e.g. running `npm install` in a `pnpm`-based project).
+プロジェクトで検出されたパッケージマネージャーと異なるコマンドの実行をブロックするプラグインです（例：`pnpm` ベースのプロジェクトで `npm install` を実行しようとした場合）。
 
-**How it works:**
-- PreToolUse hook on `Bash` intercepts every Bash command
-- Detects the project's package manager from `package.json#packageManager` field or lock file
-- Blocks with exit 2 when the command's manager differs from the detected one
-- `npx` is always allowed; non-package-manager commands pass through
+**動作の仕組み:**
+- `Bash` への PreToolUse フックがすべての Bash コマンドをインターセプト
+- `package.json#packageManager` フィールドまたはロックファイルからプロジェクトのパッケージマネージャーを検出
+- コマンドのマネージャーが検出されたものと異なる場合、exit 2 でブロック
+- `npx` は常に許可、パッケージマネージャー以外のコマンドはそのまま通過
 
-**Prerequisites:**
-- `node` available on `PATH`
+**前提条件:**
+- `node` が `PATH` に存在すること
 
-See [plugins/package-manager-enforcer](plugins/package-manager-enforcer) for more details.
+詳細は [plugins/package-manager-enforcer](plugins/package-manager-enforcer) を参照してください。
 
 ### plan-rule-review
 
-A plugin that reviews the plan for compliance with project rules (CLAUDE.md / `.claude/rules/`) before allowing Plan Mode to exit. Helps catch rule violations before implementation begins.
+プランモードを終了する前に、プロジェクトルール（CLAUDE.md / `.claude/rules/`）への準拠状況をレビューするプラグインです。実装開始前にルール違反を検出するのに役立ちます。
 
-**How it works:**
-- PreToolUse hook on `ExitPlanMode` intercepts plan finalization
-- Denies exit and injects review instructions into Claude's context
-- Claude reads CLAUDE.md and `.claude/rules/` files and reviews the plan for violations
-- If violations are found, Claude revises the plan and retries `ExitPlanMode`
-- After the configured number of reviews (default: 2), exit is always allowed
+**動作の仕組み:**
+- `ExitPlanMode` への PreToolUse フックがプランの確定をインターセプト
+- 終了を拒否してレビュー指示を Claude のコンテキストに注入
+- Claude が CLAUDE.md と `.claude/rules/` ファイルを読み込み、プランの違反箇所をレビュー
+- 違反が見つかった場合、Claude はプランを修正して `ExitPlanMode` を再試行
+- 設定した回数のレビュー後（デフォルト：2回）は常に終了が許可される
 
-**Prerequisites:**
-- `node` available on `PATH`
+**前提条件:**
+- `node` が `PATH` に存在すること
 
-**Configuration:**
-- `PLAN_RULE_REVIEW_MAX` — max reviews per session (default: `2`; set to `0` to disable)
+**設定:**
+- `PLAN_RULE_REVIEW_MAX` — セッションあたりの最大レビュー回数（デフォルト：`2`、`0` で無効化）
 
-See [plugins/plan-rule-review](plugins/plan-rule-review) for more details.
+詳細は [plugins/plan-rule-review](plugins/plan-rule-review) を参照してください。
 
 ### auto-simplify-hook
 
-A plugin that blocks Claude from stopping when there are 10+ changed lines and `/simplify` has not been run in the current session. Encourages code simplification before finishing a task.
+変更行数が10行以上あり、かつ現在のセッションで `/simplify` が実行されていない場合に Claude の停止をブロックするプラグインです。タスク完了前にコードのシンプル化を促します。
 
-**How it works:**
-- Stop hook checks `git diff HEAD --numstat` to count changed lines (added + deleted)
-- If changes are 10 lines or more and `/simplify` is not found in the transcript, returns `decision: block`
-- Skips when `stop_hook_active` is `true` to prevent infinite loops
-- Skips in non-git directories
+**動作の仕組み:**
+- Stop フックが `git diff HEAD --numstat` で変更行数（追加 + 削除）をカウント
+- 変更が10行以上かつトランスクリプトに `/simplify` が見つからない場合、`decision: block` を返す
+- 無限ループを防ぐため `stop_hook_active` が `true` の場合はスキップ
+- git 管理外のディレクトリではスキップ
 
-**Prerequisites:**
-- `jq` available on `PATH`
-- `git` available on `PATH`
+**前提条件:**
+- `jq` が `PATH` に存在すること
+- `git` が `PATH` に存在すること
 
-See [plugins/auto-simplify-hook](plugins/auto-simplify-hook) for more details.
+詳細は [plugins/auto-simplify-hook](plugins/auto-simplify-hook) を参照してください。
 
-## Installation
+## インストール
 
-### Prerequisites
+### 前提条件
 
-- [Claude Code](https://claude.com/claude-code) installed
-- Git environment set up
+- [Claude Code](https://claude.com/claude-code) がインストール済みであること
+- Git 環境がセットアップ済みであること
 
-## License
+## ライセンス
 
 MIT License
