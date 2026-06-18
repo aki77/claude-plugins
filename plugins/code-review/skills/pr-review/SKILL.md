@@ -1,6 +1,6 @@
 ---
-name: code-review
-description: "【非推奨: /code-review:pr-review を使用してください】指定されたGitHubプルリクエストに対して、複数の専門エージェント（CLAUDE.md準拠/バグ検出/REVIEW.md準拠）を並列起動して多角的なコードレビューを実施するスキル。"
+name: pr-review
+description: 指定されたGitHubプルリクエストに対して、複数の専門エージェント（CLAUDE.md準拠/バグ検出/REVIEW.md準拠）を並列起動して多角的なコードレビューを実施するスキル。
 allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(node:*), mcp__github__create_pending_pull_request_review, mcp__github__add_comment_to_pending_review, mcp__github__submit_pending_pull_request_review
 disable-model-invocation: true
 ---
@@ -17,7 +17,9 @@ disable-model-invocation: true
    - `claudeMd`: CLAUDE.mdのパス一覧（ルート直下、およびPR変更ファイルを含むディレクトリ・その祖先ディレクトリ配下）
    - `rules`: `.claude/rules/` 配下のルールファイル一覧。各エントリは `path` と `paths`（frontmatterの値、未指定の場合は `null`）を持つ。`paths:` が未指定のもの（全ファイル適用）と、PR変更ファイルのいずれかが `paths:` のglobパターンに一致するものが含まれる。
 
-2. Sonnetエージェントを起動し、プルリクエストを参照して変更内容のサマリを返す。ステップ1と並列で実行してよい（ステップ1の結果に依存しない）。
+2. Sonnetエージェントを起動し、以下の情報から変更内容のサマリを返す。ステップ1と並列で実行してよい（ステップ1の結果に依存しない）。
+   - `gh pr view <PR> --json title,body,commits --jq '{title: .title, body: .body, commits: [.commits[] | {headline: .messageHeadline, body: .messageBody}]}'`: PRタイトル・説明文・コミットメッセージ一覧（変更の意図・WHYを把握するため）
+   - `gh pr diff <PR>`: 差分テキスト（変更の具体的な内容を把握するため）
 
 3. 5つのエージェントを並列で起動し、変更内容を独立してレビューする。各エージェントは、課題の説明と指摘理由（例: 「CLAUDE.md準拠」「バグ」「REVIEW.md準拠」）を含む課題リストを返す。各エージェントの役割は以下の通り:
 
