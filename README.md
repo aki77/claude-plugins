@@ -72,6 +72,23 @@ Claude Code 用のカスタムプラグインコレクションです。
 
 詳細は [plugins/auto-simplify-hook](plugins/auto-simplify-hook) を参照してください。
 
+### code-review
+
+複数の専門エージェントを並列起動し、CLAUDE.md準拠・バグ検出・REVIEW.md準拠の観点からプルリクエストを多角的にレビューするプラグインです。
+
+**動作の仕組み:**
+- `/code-review <PR番号>` スキルを呼び出すと起動
+- `gh pr diff` でPRの変更内容を取得し、関連するプロジェクトルール（CLAUDE.md / `.claude/rules/`）を収集
+- 5つのエージェントを並列起動してレビュー（CLAUDE.md準拠×2・バグ検出×2・REVIEW.md準拠×1）
+- 各エージェントが検出した課題をサブエージェントで検証し、誤検知を除去
+- `--comment` オプション指定時はGitHub Pending Review形式でインラインコメントを投稿
+
+**前提条件:**
+- `gh` CLI が `PATH` に存在し、GitHubに認証済みであること
+- GitHub MCP サーバーが設定済みであること
+
+詳細は [plugins/code-review](plugins/code-review) を参照してください。
+
 ## インストール
 
 ### 前提条件
