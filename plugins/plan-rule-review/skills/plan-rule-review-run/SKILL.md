@@ -1,9 +1,8 @@
 ---
 name: plan-rule-review-run
-description: "Plan Mode のプラン（実装計画）をプロジェクトルール（CLAUDE.md / .claude/rules/）準拠の観点でレビューするスキル。plan-rule-review フックから起動され、違反があればプランを修正させてから ExitPlanMode を許可する。手動実行は想定しない（フック起動専用）。"
-argument-hint: "（引数不要。レビュー対象のプラン全文はフックの reason 内 <<<PLAN ... PLAN ブロックに含まれる）"
+description: "plan-rule-review フック専用。手動・自動を問わずこのスキル名で明示起動されたときのみ実行する。"
 allowed-tools: Bash(node:*), Task
-disable-model-invocation: true
+user-invocable: false
 ---
 
 Plan Mode のプランがプロジェクトルールに違反していないかをレビューします。
