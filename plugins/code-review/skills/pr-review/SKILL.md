@@ -13,7 +13,7 @@ disable-model-invocation: true
 
 以下の手順を厳密に実行してください:
 
-1. `node ${CLAUDE_PLUGIN_ROOT}/skills/code-review/scripts/collect-rules.mjs <PR>` を実行して、PRに関連するプロジェクトルールファイル一覧をJSONで取得する。スクリプトは標準出力に以下を出力する:
+1. `node ${CLAUDE_PLUGIN_ROOT}/skills/pr-review/scripts/collect-rules.mjs <PR>` を実行して、PRに関連するプロジェクトルールファイル一覧をJSONで取得する。スクリプトは標準出力に以下を出力する:
    - `claudeMd`: CLAUDE.mdのパス一覧（ルート直下、およびPR変更ファイルを含むディレクトリ・その祖先ディレクトリ配下）
    - `rules`: `.claude/rules/` 配下のルールファイル一覧。各エントリは `path` と `paths`（frontmatterの値、未指定の場合は `null`）を持つ。`paths:` が未指定のもの（全ファイル適用）と、PR変更ファイルのいずれかが `paths:` のglobパターンに一致するものが含まれる。
 
