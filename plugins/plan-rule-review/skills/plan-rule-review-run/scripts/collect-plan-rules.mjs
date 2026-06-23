@@ -98,11 +98,12 @@ async function listRuleFiles() {
   return matches.sort();
 }
 
-async function anyChangedFileMatches(patterns, files) {
+// 抽出済みのファイルパス文字列を glob パターンと直接照合する。
+// ファイルシステムを走査しないため、まだ存在しない新規作成予定のファイルでもマッチできる。
+function anyChangedFileMatches(patterns, files) {
   for (const pattern of patterns) {
-    for await (const match of glob(pattern, { cwd })) {
-      const normalized = match.split(path.sep).join("/");
-      if (files.includes(normalized)) return true;
+    for (const file of files) {
+      if (path.matchesGlob(file, pattern)) return true;
     }
   }
   return false;
@@ -118,7 +119,7 @@ async function collectRules(files) {
       results.push({ path: file, paths: null });
     } else if (paths.length === 0) {
       continue;
-    } else if (await anyChangedFileMatches(paths, files)) {
+    } else if (anyChangedFileMatches(paths, files)) {
       results.push({ path: file, paths });
     }
   }
