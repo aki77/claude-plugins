@@ -1,7 +1,7 @@
 ---
 name: pr-review
 description: 指定されたGitHubプルリクエストに対して、複数の専門エージェント（CLAUDE.md準拠/バグ検出/REVIEW.md準拠）を並列起動して多角的なコードレビューを実施するスキル。
-allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(node:*), mcp__github__create_pending_pull_request_review, mcp__github__add_comment_to_pending_review, mcp__github__submit_pending_pull_request_review
+allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(git rev-parse:*), Bash(node:*), mcp__github__create_pending_pull_request_review, mcp__github__add_comment_to_pending_review, mcp__github__submit_pending_pull_request_review
 disable-model-invocation: true
 ---
 
@@ -13,9 +13,17 @@ disable-model-invocation: true
 
 以下の手順を厳密に実行してください:
 
-1. `node ${CLAUDE_PLUGIN_ROOT}/skills/pr-review/scripts/collect-rules.mjs <PR>` を実行して、PRに関連するプロジェクトルールファイル一覧をJSONで取得する。スクリプトは標準出力に以下を出力する:
-   - `claudeMd`: CLAUDE.mdのパス一覧（ルート直下、およびPR変更ファイルを含むディレクトリ・その祖先ディレクトリ配下）
-   - `rules`: `.claude/rules/` 配下のルールファイル一覧。各エントリは `path` と `paths`（frontmatterの値、未指定の場合は `null`）を持つ。`paths:` が未指定のもの（全ファイル適用）と、PR変更ファイルのいずれかが `paths:` のglobパターンに一致するものが含まれる。
+0. **PR HEAD とローカルの一致を確認する（最初に必ず実行）。** このスキルはプロジェクトルール（`CLAUDE.md` / `.claude/rules/` / `REVIEW.md` / 観点ファイル）をローカル作業ツリーから読むため、ローカルの HEAD が対象 PR の HEAD コミットと一致している必要がある。以下を実行して照合する:
+   - `gh pr view <PR> --json headRefOid --jq .headRefOid` で PR HEAD の commit sha を取得する。
+   - `git rev-parse HEAD` でローカル HEAD の commit sha を取得する。
+   - 両者が**完全一致しない**場合は、レビューを行わずに次の旨を報告して**処理を終了する**: 「ローカルの HEAD が PR #<PR> の HEAD（`<headRefOid>`）と一致しません（ローカル: `<localSha>`）。このスキルはルールファイルをローカルから読むため、対象 PR のブランチをチェックアウト（または最新化）してから再実行してください。」
+   - 一致する場合のみ、以降のステップに進む。
+
+1. `node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-rules.mjs --pr <PR>` を実行して、PR変更ファイルへのプロジェクトルール適用結果をJSONで取得する。なお、ルール（CLAUDE.md と `.claude/rules/`）はローカル作業ツリーから読み込むため、ステップ0の一致確認が前提となる。スクリプトは各変更ファイルにどのルール（CLAUDE.md と `.claude/rules/`）が適用されるかを決定論的に算出し、エージェント1・2の担当割り当てとして出力する。標準出力の形式は以下:
+   - `assignments`: エージェント1・2への担当割り当て（2要素の配列。`assignments[0]` がエージェント1用、`assignments[1]` がエージェント2用）。各要素は `files` を持ち、`files` は `{ path, rules }` の配列。
+     - `path`: 担当する変更ファイルのパス。
+     - `rules`: そのファイルに適用されるルールファイルのパス一覧（適用される CLAUDE.md と `.claude/rules/` を区別なく列挙。親ディレクトリのCLAUDE.md・`paths` がそのファイルに一致する `.claude/rules/`・`paths` 未指定の全適用ルールがすべて含まれ、一致しないルールは含まれない）。スコープ判定はスクリプトが済ませているため、エージェントは `rules` をそのまま参照すればよい。
+   - 適用ルールセットが同一のファイルが同一エージェントに寄せられ、かつ各エージェントが担当ファイルに不要なルールを読まずに済むよう、スクリプトが決定論的に振り分け済み。
 
 2. Sonnetエージェントを起動し、以下の情報から変更内容のサマリを返す。ステップ1と並列で実行してよい（ステップ1の結果に依存しない）。
    - `gh pr view <PR> --json title,body,commits --jq '{title: .title, body: .body, commits: [.commits[] | {headline: .messageHeadline, body: .messageBody}]}'`: PRタイトル・説明文・コミットメッセージ一覧（変更の意図・WHYを把握するため）
@@ -24,12 +32,7 @@ disable-model-invocation: true
 3. 5つのエージェントを並列で起動し、変更内容を独立してレビューする。各エージェントは、課題の説明と指摘理由（例: 「CLAUDE.md準拠」「バグ」「REVIEW.md準拠」）を含む課題リストを返す。各エージェントの役割は以下の通り:
 
    エージェント1, 2: プロジェクトルール準拠チェック（Sonnet）
-   変更ファイルを半分ずつ分担し、並列でプロジェクトルール（CLAUDE.md および `.claude/rules/` 配下のルールファイル）への準拠を監査する（例: 変更ファイルが6つなら、エージェント1が最初の3ファイル、エージェント2が残り3ファイルを担当）。注: あるファイルのルール準拠を評価する際は、以下のみを対象とすること:
-   - そのファイルまたはその親ディレクトリに存在するCLAUDE.md
-   - ステップ1で収集された `.claude/rules/` のルールファイルのうち、`paths` が `null`（frontmatter未指定。全ファイル適用）のもの
-   - ステップ1で収集された `.claude/rules/` のルールファイルのうち、`paths` のglobパターンが対象ファイルのパスに一致するもの
-
-   `paths` で指定されたglobパターンに一致しないファイルに対して、そのルールを適用しないこと。
+   エージェント1はステップ1の `assignments[0].files`、エージェント2は `assignments[1].files` を担当し、並列でプロジェクトルール（CLAUDE.md および `.claude/rules/` 配下のルールファイル）への準拠を監査する。担当ファイルの振り分けはステップ1のスクリプトが決定済みのため、エージェント側で再分配しないこと。`assignments[1].files` が空の場合（全ファイルが1エージェントに収まる場合）はエージェント2を起動しないこと。各ファイルに適用すべきルールは `files[i].rules` に列挙済み（スコープ判定はスクリプトが完了している）。**あるファイルのレビューでは、そのファイルの `rules` に列挙されたルールファイルのみを適用すること。`rules` に含まれないルールでそのファイルを指摘しないこと。**
 
    エージェント3: バグ検出（Opus、エージェント4と並列）
    明らかなバグを探す。diffの内容のみに注目し、追加コンテキストの読み込みは行わない。重大なバグのみを指摘し、些細な指摘や誤検知の可能性が高いものは無視する。git diff外のコンテキストを参照しないと判断できない指摘は行わないこと。
@@ -70,7 +73,7 @@ disable-model-invocation: true
 
    各サブエージェントには、PRタイトルと説明文を併せて渡す。これにより著者の意図を踏まえたレビューが可能になる。
 
-4. ステップ3でエージェント1〜5が検出した各課題について、検証用のサブエージェントを並列起動する。各サブエージェントには、PRタイトル・説明文と課題の概要を渡す。サブエージェントの役割は、提示された課題が高い確度で実際の問題であるかを検証すること。例えば「変数が未定義」と指摘された場合、コード上で実際にそれが正しいかを確認する。プロジェクトルール違反（CLAUDE.md および `.claude/rules/`）および REVIEW.md 違反の場合は、該当ルールがそのファイルに適用されるスコープであるか（`.claude/rules/` の場合は `paths` に一致するか）、かつ実際に違反しているかを検証する。バグ・ロジック系（エージェント3, 4由来）の検証にはOpusサブエージェントを、プロジェクトルール違反（エージェント1, 2由来）およびREVIEW.md違反（エージェント5由来）の検証にはSonnetエージェントを使用する。
+4. ステップ3でエージェント1〜5が検出した各課題について、検証用のサブエージェントを並列起動する。各サブエージェントには、PRタイトル・説明文と課題の概要を渡す。サブエージェントの役割は、提示された課題が高い確度で実際の問題であるかを検証すること。例えば「変数が未定義」と指摘された場合、コード上で実際にそれが正しいかを確認する。プロジェクトルール違反（エージェント1, 2由来。CLAUDE.md および `.claude/rules/`）の場合、適用スコープはステップ1のスクリプトが `files[i].rules` として確定済みのため、その範囲内で実際に違反しているかのみを検証する（`paths` 一致の再判定は不要）。REVIEW.md 違反（エージェント5由来）の場合は、該当観点がそのファイルに適用される対象か、かつ実際に違反しているかを検証する。バグ・ロジック系（エージェント3, 4由来）の検証にはOpusサブエージェントを、プロジェクトルール違反（エージェント1, 2由来）およびREVIEW.md違反（エージェント5由来）の検証にはSonnetエージェントを使用する。
 
 5. ステップ4で検証されなかった課題は除外する。これにより最終的な高シグナル課題リストが得られる。
 
