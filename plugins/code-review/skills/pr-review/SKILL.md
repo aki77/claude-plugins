@@ -1,7 +1,7 @@
 ---
 name: pr-review
 description: 指定されたGitHubプルリクエストに対して、複数の専門エージェント（CLAUDE.md準拠/バグ検出/REVIEW.md準拠）を並列起動して多角的なコードレビューを実施するスキル。
-allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(node:*), mcp__github__create_pending_pull_request_review, mcp__github__add_comment_to_pending_review, mcp__github__submit_pending_pull_request_review
+allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(git rev-parse:*), Bash(node:*), mcp__github__create_pending_pull_request_review, mcp__github__add_comment_to_pending_review, mcp__github__submit_pending_pull_request_review
 disable-model-invocation: true
 ---
 
@@ -13,7 +13,13 @@ disable-model-invocation: true
 
 以下の手順を厳密に実行してください:
 
-1. `node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-rules.mjs --pr <PR>` を実行して、PR変更ファイルへのプロジェクトルール適用結果をJSONで取得する。スクリプトは各変更ファイルにどのルール（CLAUDE.md と `.claude/rules/`）が適用されるかを決定論的に算出し、エージェント1・2の担当割り当てとして出力する。標準出力の形式は以下:
+0. **PR HEAD とローカルの一致を確認する（最初に必ず実行）。** このスキルはプロジェクトルール（`CLAUDE.md` / `.claude/rules/` / `REVIEW.md` / 観点ファイル）をローカル作業ツリーから読むため、ローカルの HEAD が対象 PR の HEAD コミットと一致している必要がある。以下を実行して照合する:
+   - `gh pr view <PR> --json headRefOid --jq .headRefOid` で PR HEAD の commit sha を取得する。
+   - `git rev-parse HEAD` でローカル HEAD の commit sha を取得する。
+   - 両者が**完全一致しない**場合は、レビューを行わずに次の旨を報告して**処理を終了する**: 「ローカルの HEAD が PR #<PR> の HEAD（`<headRefOid>`）と一致しません（ローカル: `<localSha>`）。このスキルはルールファイルをローカルから読むため、対象 PR のブランチをチェックアウト（または最新化）してから再実行してください。」
+   - 一致する場合のみ、以降のステップに進む。
+
+1. `node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-rules.mjs --pr <PR>` を実行して、PR変更ファイルへのプロジェクトルール適用結果をJSONで取得する。なお、ルール（CLAUDE.md と `.claude/rules/`）はローカル作業ツリーから読み込むため、ステップ0の一致確認が前提となる。スクリプトは各変更ファイルにどのルール（CLAUDE.md と `.claude/rules/`）が適用されるかを決定論的に算出し、エージェント1・2の担当割り当てとして出力する。標準出力の形式は以下:
    - `assignments`: エージェント1・2への担当割り当て（2要素の配列。`assignments[0]` がエージェント1用、`assignments[1]` がエージェント2用）。各要素は `files` を持ち、`files` は `{ path, rules }` の配列。
      - `path`: 担当する変更ファイルのパス。
      - `rules`: そのファイルに適用されるルールファイルのパス一覧（適用される CLAUDE.md と `.claude/rules/` を区別なく列挙。親ディレクトリのCLAUDE.md・`paths` がそのファイルに一致する `.claude/rules/`・`paths` 未指定の全適用ルールがすべて含まれ、一致しないルールは含まれない）。スコープ判定はスクリプトが済ませているため、エージェントは `rules` をそのまま参照すればよい。
