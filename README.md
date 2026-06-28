@@ -69,7 +69,7 @@ Claude Code 用のカスタムプラグインコレクションです。
 
 **前提条件:**
 - `node` が `PATH` に存在すること
-- `rubocop` が `PATH` に存在すること
+- 検証先プロジェクトで `bundle exec rubocop` が利用可能であること（Gemfile に rubocop が含まれる）
 
 **設定:**
 - `PLAN_RUBOCOP_REVIEW_MAX` — セッションあたりの最大レビュー回数（デフォルト：`2`、`0` で無効化）
