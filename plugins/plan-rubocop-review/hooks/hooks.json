@@ -1,0 +1,17 @@
+{
+  "description": "ExitPlanMode 時にプラン内 Ruby コードブロックを RuboCop で検証させる",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/review-plan-rubocop.mjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -29,6 +29,11 @@
       "name": "plan-rule-review",
       "source": "./plugins/plan-rule-review",
       "description": "PreToolUse(ExitPlanMode) hook that reviews the plan for compliance with project rules (CLAUDE.md / .claude/rules/) before allowing exit"
+    },
+    {
+      "name": "plan-rubocop-review",
+      "source": "./plugins/plan-rubocop-review",
+      "description": "PreToolUse(ExitPlanMode) hook that validates Ruby code blocks in the plan with RuboCop (--stdin) before allowing exit"
     }
   ]
 }
