@@ -56,6 +56,42 @@ Claude Code 用のカスタムプラグインコレクションです。
 
 詳細は [plugins/plan-rule-review](plugins/plan-rule-review) を参照してください。
 
+### plan-rubocop-review
+
+プランモードを終了する前に、プラン本文中の Ruby コードブロックを RuboCop（`--stdin`）で検証するプラグインです。実装開始前にプラン内のコード例の問題を検出するのに役立ちます。
+
+**動作の仕組み:**
+- `ExitPlanMode` への PreToolUse フックがプランの確定をインターセプト
+- プラン本文からバッククォートフェンスの Ruby コードブロックを抽出し、RuboCop（`--stdin`）で検証
+- ブート時間削減のため RuboCop は server mode で実行
+- 違反が見つかった場合は deny し、プラン内コードの修正を促す
+- 設定した回数のレビュー後（デフォルト：2回）は常に終了が許可される
+
+**前提条件:**
+- `node` が `PATH` に存在すること
+- `rubocop` が `PATH` に存在すること
+
+**設定:**
+- `PLAN_RUBOCOP_REVIEW_MAX` — セッションあたりの最大レビュー回数（デフォルト：`2`、`0` で無効化）
+
+詳細は [plugins/plan-rubocop-review](plugins/plan-rubocop-review) を参照してください。
+
+### plan-archive
+
+古くなったプランファイルを `archived/` サブディレクトリへ自動的に退避させるプラグインです。プランディレクトリが古いファイルで散らからないように整理します。
+
+**動作の仕組み:**
+- Stop フックが transcript の `planFilePath`（plan_mode attachment）からプランディレクトリを特定
+- そのディレクトリ直下で mtime が 30 日以上前の `.md` プランファイルを抽出
+- 対象ファイルを `archived/` サブディレクトリへ移動し、ファイル名に最終更新日時の prefix（`YYYY-MM-DD_HHMM`）を付与
+- 同名衝突時は連番サフィックスを付けて回避
+- 無限ループを防ぐため `stop_hook_active` が `true` の場合はスキップ
+
+**前提条件:**
+- `node` が `PATH` に存在すること
+
+詳細は [plugins/plan-archive](plugins/plan-archive) を参照してください。
+
 ### auto-simplify-hook
 
 変更行数が10行以上あり、かつ現在のセッションで `/simplify` が実行されていない場合に Claude の停止をブロックするプラグインです。タスク完了前にコードのシンプル化を促します。
