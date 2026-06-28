@@ -18,7 +18,7 @@ Claude Code の Plan Mode では、実装前のプランに具体的な Ruby コ
 4. マーカーがなく `` ```ruby `` ブロックを含み、セッションあたりの検証回数が上限未満なら、`ExitPlanMode` を deny（拒否）し、「`plan-rubocop-review:plan-rubocop-review-run` スキルを実行せよ」という指示とプラン全文を Claude の context に注入する
 5. Claude 本体は `plan-rubocop-review-run` スキルを起動し、その手順に従う:
    1. プラン本文から ` ```ruby ` コードブロックを列挙し、各ブロックの**本来の配置パス**を直前の見出し・記述から推定する（推定できないブロックは検証をスキップ）
-   2. `rubocop-stdin.mjs` にコードと推定パスを渡し、検証先プロジェクトのルートで `bundle exec rubocop --stdin <path> --format json` を実行する（**ファイルは作成・変更せず `--stdin` でメモリ上で検証**）
+   2. `rubocop-stdin.mjs` にコードと推定パスを渡し、検証先プロジェクトのルートで `bundle exec rubocop --server --stdin <path> --format json --force-exclusion` を実行する（**ファイルは作成・変更せず `--stdin` でメモリ上で検証**）。[RuboCop server mode](https://docs.rubocop.org/rubocop/latest/usage/server.html) を使うため初回でサーバが常駐してブート時間を削減し、全ブロック検証後にスクリプトが `--stop-server` でサーバを停止する
    3. 違反があればプラン内の該当コードブロックを RuboCop 指摘に沿って修正し、マーカーは付けずに再度 `ExitPlanMode` を呼ぶ
    4. 違反がなければプラン末尾にマーカーを追記して `ExitPlanMode` を呼ぶ → ステップ 2 で即座に許可される
    5. 検証したブロック数・スキップしたブロック数・違反件数を必ずユーザーに報告する
@@ -115,6 +115,7 @@ cat /tmp/blocks.json | node "$SCRIPT"
 
 - `node` が `PATH` 上にあること（フックとラッパスクリプトが Node.js）
 - 検証先プロジェクトで `bundle exec rubocop` が利用可能で、`.rubocop.yml` が存在すること（無ければ検証はスキップされ素通しする）
+- ラッパは RuboCop server mode（`--server`）で検証し、検証後に `--stop-server` でサーバを停止する。server mode は JRuby / Windows では利用できない（`fork` 非対応のため）
 
 ## 既知の制限
 

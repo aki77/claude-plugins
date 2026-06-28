@@ -8,7 +8,10 @@
 //
 // 動作:
 //   検証先プロジェクトのルート（カレントディレクトリ＝.rubocop.yml がある場所）で
-//   各ブロックを `bundle exec rubocop --stdin <path> --format json --force-exclusion` で検証する。
+//   各ブロックを `bundle exec rubocop --server --stdin <path> --format json --force-exclusion`
+//   で検証する。`--server` により初回呼び出しで RuboCop サーバが自動起動・常駐し、2 ブロック目
+//   以降はそのサーバを使い回してブート時間を削減する。全ブロック検証後に `--stop-server` で
+//   サーバを停止し、常駐プロセスを残さない。
 //   ファイルは一切作成・変更しない（--stdin はメモリ上で評価する）。
 //
 // 出力（stdout, JSON）:
@@ -44,12 +47,22 @@ function checkRubocopAvailable() {
   return res.status === 0;
 }
 
+// 全ブロック検証後に常駐サーバを停止する後始末。
+// 失敗してもフックの動作を妨げないため、戻り値・例外は無視する。
+function stopRubocopServer() {
+  spawnSync("bundle", ["exec", "rubocop", "--stop-server"], {
+    encoding: "utf-8",
+  });
+}
+
 function runRubocop(code, filePath) {
   const res = spawnSync(
     "bundle",
     [
       "exec",
       "rubocop",
+      // 初回でサーバが自動起動・常駐し、以降のブロックはそれを使い回す。
+      "--server",
       "--stdin",
       filePath,
       "--format",
@@ -145,6 +158,9 @@ function main() {
   console.log(
     JSON.stringify({ rubocopAvailable: true, results, totalOffenses }, null, 2)
   );
+  // 検証を実行した（サーバを起動した可能性がある）経路でのみ後始末する。
+  // 早期 exit する経路（入力不正・blocks 空・rubocop 不在）はサーバを起動していない。
+  stopRubocopServer();
   process.exit(0);
 }
 

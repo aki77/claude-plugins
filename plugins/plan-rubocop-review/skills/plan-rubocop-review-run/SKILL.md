@@ -52,7 +52,7 @@ cat /tmp/plan-rubocop-blocks.json | node ${CLAUDE_PLUGIN_ROOT}/skills/plan-ruboc
 
 `code` フィールドには Ruby ソースを正しい改行・インデントで入れること（JSON 文字列としてエスケープする）。`path` はそのコードの本来の配置パス。
 
-スクリプトは各ブロックを `bundle exec rubocop --stdin <path> --format json --force-exclusion` で検証し、次の JSON を返す:
+スクリプトは各ブロックを `bundle exec rubocop --server --stdin <path> --format json --force-exclusion` で検証する。`--server` により初回呼び出しで RuboCop サーバが起動・常駐し、2 ブロック目以降はそれを使い回してブート時間を削減する。全ブロック検証後にスクリプトが `--stop-server` でサーバを停止するため、常駐プロセスは残らない。検証結果は次の JSON で返る:
 
 - `rubocopAvailable: false` → このプロジェクトで `bundle exec rubocop` が使えない、または入力不正。**検証不能** として手順4へ（PASS 扱い・マーカー付与）。その旨をユーザーに報告する。
 - `rubocopAvailable: true` → `results` に各ブロックの `offenseCount` と `offenses`（`cop` / `message` / `line` / `severity` / `correctable`）が入る。`totalOffenses` が総違反数。
