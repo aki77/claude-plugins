@@ -8,7 +8,7 @@ disable-model-invocation: true
 指定された範囲のローカルgit変更に対してコードレビューを行います。
 
 引数: `[<range>]`
-- 引数なし: ブランチ設定から base を自動解決（`github-pr-base-branch` → `vscode-merge-base` → `@{upstream}` → `origin/HEAD` の順）
+- 引数なし: **ステージ済み変更（`git diff --staged`）があればそれを優先してレビュー対象にする**（コミット前レビュー）。ステージ済み変更がなければブランチ設定から base を自動解決（`github-pr-base-branch` → `vscode-merge-base` → `@{upstream}` → `origin/HEAD` の順）
 - `main`: base のみ指定 → `main...HEAD` として補完
 - `main...HEAD` / `main..HEAD`: そのまま使用
 - `abc123..def456`: 任意のコミット間
@@ -19,8 +19,10 @@ disable-model-invocation: true
 
 以下の手順を厳密に実行してください:
 
-1. `node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-rules.mjs --range <range>` を実行して、変更ファイルへのプロジェクトルール適用結果をJSONで取得する。引数の `<range>` が省略された場合は `--range` のみで実行する（スクリプト内で自動解決する）。スクリプトは各変更ファイルにどのルール（CLAUDE.md と `.claude/rules/`）が適用されるかを決定論的に算出し、エージェント1・2の担当割り当てとして出力する。標準出力の形式は以下:
-   - `range`: 解決済みの git range（例: `abc123...HEAD`）
+1. `node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-rules.mjs --range <range>` を実行して、変更ファイルへのプロジェクトルール適用結果をJSONで取得する。引数の `<range>` が省略された場合は `--range` のみで実行する（スクリプト内で自動解決する。ステージ済み変更があればそれを優先対象にする）。スクリプトは各変更ファイルにどのルール（CLAUDE.md と `.claude/rules/`）が適用されるかを決定論的に算出し、エージェント1・2の担当割り当てとして出力する。標準出力の形式は以下:
+   - `source`: レビュー対象の種別。`"range"`（git range のコミット差分）または `"staged"`（ステージ済み変更）。
+   - `diffArgs`: 後続ステップで `git diff` に渡す引数の配列。range モードでは `[<range>]`、staged モードでは `["--staged"]`。以降の差分取得はこの値を使い `git diff <diffArgs>` として一様に実行する。
+   - `range`: 解決済みの git range（例: `abc123...HEAD`）。`source` が `"range"` のときのみ存在する（staged モードでは存在しない）。
    - `changedFiles`: 変更ファイルのパス一覧
    - `assignments`: エージェント1・2への担当割り当て（2要素の配列。`assignments[0]` がエージェント1用、`assignments[1]` がエージェント2用）。各要素は `files` を持ち、`files` は `{ path, rules }` の配列。
      - `path`: 担当する変更ファイルのパス。
@@ -28,10 +30,10 @@ disable-model-invocation: true
    - 適用ルールセットが同一のファイルが同一エージェントに寄せられ、かつ各エージェントが担当ファイルに不要なルールを読まずに済むよう、スクリプトが決定論的に振り分け済み。
 
 2. Sonnetエージェントを起動し、以下の情報から変更内容のサマリを返す。ステップ1と並列で実行してよい（ステップ1の結果に依存しない）。
-   - `git log --format="%H%n%s%n%b%n---" <range>`: コミットメッセージ一覧（件名・本文を含む。変更の意図・WHYを把握するため）
-   - `git diff <range>`: 差分テキスト（変更の具体的な内容を把握するため）
+   - `git log --format="%H%n%s%n%b%n---" <range>`: コミットメッセージ一覧（件名・本文を含む。変更の意図・WHYを把握するため）。**`source` が `"staged"` の場合はコミットが存在しないため `git log` は実行せず、`git diff --staged` のみからサマリを作成する。**
+   - `git diff <diffArgs>`: 差分テキスト（変更の具体的な内容を把握するため。range モードでは `git diff <range>`、staged モードでは `git diff --staged`）
 
-3. 5つのエージェントを並列で起動し、変更内容を独立してレビューする。各エージェントは、課題の説明と指摘理由（例: 「CLAUDE.md準拠」「バグ」「REVIEW.md準拠」）を含む課題リストを返す。差分の取得には `git diff <range>` を使用すること。各エージェントの役割は以下の通り:
+3. 5つのエージェントを並列で起動し、変更内容を独立してレビューする。各エージェントは、課題の説明と指摘理由（例: 「CLAUDE.md準拠」「バグ」「REVIEW.md準拠」）を含む課題リストを返す。差分の取得には `git diff <diffArgs>`（range モードでは `git diff <range>`、staged モードでは `git diff --staged`）を使用すること。各エージェントの役割は以下の通り:
 
    エージェント1, 2: プロジェクトルール準拠チェック（Sonnet）
    エージェント1はステップ1の `assignments[0].files`、エージェント2は `assignments[1].files` を担当し、並列でプロジェクトルール（CLAUDE.md および `.claude/rules/` 配下のルールファイル）への準拠を監査する。担当ファイルの振り分けはステップ1のスクリプトが決定済みのため、エージェント側で再分配しないこと。`assignments[1].files` が空の場合（全ファイルが1エージェントに収まる場合）はエージェント2を起動しないこと。各ファイルに適用すべきルールは `files[i].rules` に列挙済み（スコープ判定はスクリプトが完了している）。**あるファイルのレビューでは、そのファイルの `rules` に列挙されたルールファイルのみを適用すること。`rules` に含まれないルールでそのファイルを指摘しないこと。**

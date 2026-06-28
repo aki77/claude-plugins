@@ -49,6 +49,13 @@ function getChangedFilesFromRange(range) {
   return splitLines(out);
 }
 
+function getStagedFiles() {
+  const out = execFileSync("git", ["diff", "--staged", "--name-only"], {
+    encoding: "utf8",
+  });
+  return splitLines(out);
+}
+
 function splitLines(out) {
   return out
     .split("\n")
@@ -343,8 +350,15 @@ if (!process.env.NODE_TEST_CONTEXT) {
   if (opts.mode === "pr") {
     changedFiles = getChangedFilesFromPr(opts.pr);
   } else {
-    range = resolveRange(opts.range);
-    changedFiles = getChangedFilesFromRange(range);
+    // 引数なし実行 かつ ステージ済み変更あり → staged モード（コミット前レビュー）。
+    // それ以外は range を解決する。range の有無で staged / range を判別する。
+    const staged = opts.range ? [] : getStagedFiles();
+    if (staged.length > 0) {
+      changedFiles = staged;
+    } else {
+      range = resolveRange(opts.range);
+      changedFiles = getChangedFilesFromRange(range);
+    }
   }
 
   const rules = await collectRules(changedFiles);
@@ -352,7 +366,11 @@ if (!process.env.NODE_TEST_CONTEXT) {
 
   const output = { assignments };
   if (opts.mode === "range") {
-    output.range = range;
+    // range があれば range モード、なければ staged モード。diffArgs は後続の
+    // `git diff <diffArgs>` 用引数（SKILL 側の差分取得を一様化する）。
+    output.source = range ? "range" : "staged";
+    output.diffArgs = range ? [range] : ["--staged"];
+    if (range) output.range = range;
     output.changedFiles = changedFiles;
   }
 
