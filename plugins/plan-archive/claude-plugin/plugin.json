@@ -1,0 +1,10 @@
+{
+  "name": "plan-archive",
+  "version": "0.1.0",
+  "description": "Stop フック完了時に、transcript の planFilePath からプランディレクトリを特定し、その直下で mtime が 30 日以上前のプランファイルを archived/ サブディレクトリへ移動して、ファイル名に最終更新日時（YYYY-MM-DD_HHMM）の prefix を付けるプラグイン。",
+  "author": {
+    "name": "aki77",
+    "email": "aki77@users.noreply.github.com"
+  },
+  "keywords": ["hooks", "stop", "plan-mode", "archive", "cleanup"]
+}

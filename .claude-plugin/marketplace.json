@@ -34,6 +34,11 @@
       "name": "plan-rubocop-review",
       "source": "./plugins/plan-rubocop-review",
       "description": "PreToolUse(ExitPlanMode) hook that validates Ruby code blocks in the plan with RuboCop (--stdin) before allowing exit"
+    },
+    {
+      "name": "plan-archive",
+      "source": "./plugins/plan-archive",
+      "description": "Stop hook that moves plan files older than 30 days (by mtime) into an archived/ subdirectory, resolving the plans directory from the transcript's planFilePath and prefixing each filename with its last-modified timestamp (YYYY-MM-DD_HHMM)"
     }
   ]
 }

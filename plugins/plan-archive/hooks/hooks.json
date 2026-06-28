@@ -1,0 +1,17 @@
+{
+  "description": "Stop 完了時に古いプランファイルを archived/ へ退避させる",
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/archive-plans.mjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
