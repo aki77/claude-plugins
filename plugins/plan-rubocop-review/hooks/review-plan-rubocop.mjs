@@ -20,7 +20,9 @@ async function readStdin() {
 // プラン本文に ```ruby / ```rb の開始フェンスが 1 つ以上あるかを軽量に判定する。
 // 厳密な Markdown パースはしない（フックは軽量・高速に保つ。正確な抽出は SKILL 側で行う）。
 function hasRubyCodeBlock(plan) {
-  return /^[ \t]*(`{3,}|~{3,})[ \t]*(ruby|rb)\b/im.test(plan);
+  // SKILL 側の抽出手順は ```ruby / ```rb のバッククォートフェンスのみを対象とするため、
+  // フックの検出もそれに揃える（チルダフェンス `~~~ruby` を deny して未検証で素通しさせない）。
+  return /^[ \t]*`{3,}[ \t]*(ruby|rb)\b/im.test(plan);
 }
 
 function getMaxReviews() {
