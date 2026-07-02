@@ -13,7 +13,7 @@ disable-model-invocation: true
 
 以下の手順を厳密に実行してください:
 
-0. **PR HEAD とローカルの一致を確認する（最初に必ず実行）。** このスキルはプロジェクトルール（`CLAUDE.md` / `.claude/rules/` / `REVIEW.md` / 観点ファイル）をローカル作業ツリーから読むため、ローカルの HEAD が対象 PR の HEAD コミットと一致している必要がある。以下を実行して照合する:
+0. **PR HEAD とローカルの一致を確認する（最初に必ず実行）。** このスキルはプロジェクトルール（`CLAUDE.md` / `.claude/rules/` / `REVIEW.md` / 観点ファイル）をローカル作業ツリーから読むため、ローカルの HEAD が対象 PR の HEAD コミットと一致している必要がある。この確認は `--comment` 引数の有無に関わらず必須であり、一致しない場合は無条件に処理を終了する。以下を実行して照合する:
    - `gh pr view <PR> --json headRefOid --jq .headRefOid` で PR HEAD の commit sha を取得する。
    - `git rev-parse HEAD` でローカル HEAD の commit sha を取得する。
    - 両者が**完全一致しない**場合は、レビューを行わずに次の旨を報告して**処理を終了する**: 「ローカルの HEAD が PR #<PR> の HEAD（`<headRefOid>`）と一致しません（ローカル: `<localSha>`）。このスキルはルールファイルをローカルから読むため、対象 PR のブランチをチェックアウト（または最新化）してから再実行してください。」
@@ -85,21 +85,35 @@ disable-model-invocation: true
 
    `--comment` 引数が指定されている場合は、課題の有無にかかわらずステップ7に進む（課題ゼロの場合もPRレビューとして投稿する）。
 
-7. 投稿予定のコメント一覧を作成する。これは投稿内容を自分で確認するためのもので、どこにも投稿しないこと。
+7. 投稿予定のコメント一覧を作成する。これは投稿内容を自分で確認するためのもので、どこにも投稿しないこと。各課題について以下を確定する:
+   - `path`: 対象ファイルの相対パス。
+   - `existingCode`: **diff 中にそのまま存在する連続した数行**（コメントを貼る位置のアンカーになる。行番号は書かない）。次を守ること:
+     - diff の該当箇所からコード片を**逐語コピー**する（インデント込み。書き換え・整形をしない）。
+     - suggestion で**行を削除する場合は、削除したい行と残したい行の両方をこの範囲に含める**（例: 31行目のコメントを消して32行目の `def` を残すなら、その2行を `existingCode` に含める）。
+     - アンカーは diff 内で**一意に特定できる**長さにする（同一行が複数箇所にある場合は前後行も含めて曖昧さを消す）。
+   - `suggestionBody`: suggestion ブロックの中身（= `existingCode` の範囲を丸ごと置き換える最終形）。**行を削除する修正では、範囲に削除行を含めつつ `suggestionBody` からその行を省く**（範囲2行→本文1行 = 実質削除）。
+   - `commentBody`: suggestion ブロックを除いたコメント文（課題の概要・引用元リンク）。
 
-8. Pending Review 方式でレビューを投稿する。手順は以下:
+8. 各課題の行番号を **スクリプトで確定する**。**行番号（`line` / `startLine`）を自分で推測して指定してはならない。** LLM が行番号を推測すると diff にマッピングできない指定（特に削除を伴う修正）になり、GitHub 側で位置解決に失敗して `line: null` 化する。手順:
+   - ステップ7の各課題から `{ path, existingCode }` の配列を作り、`node ${CLAUDE_PLUGIN_ROOT}/scripts/resolve-suggestion-lines.mjs --pr <PR>` に **stdin で JSON を渡す**（`existingCode` の改行は `\n` としてJSONエスケープすること）。
+   - スクリプトは各課題について diff hunk とテキストマッチして行番号を機械的に確定し、入力と同順の配列を返す:
+     - `{ resolved: true, params: { line, startLine?, side?, startSide?, subjectType } }`: `params` をそのまま `add_comment_to_pending_review` に渡す。
+     - `{ resolved: false, reason }`: 該当箇所を diff から一意に特定できなかった課題。**インラインコメントにせず**、ステップ9のレビューサマリ本文に文章で記載する（誤った位置に貼らない）。`existingCode` が diff と逐語一致していない可能性が高いので、必要なら `existingCode` を diff に合わせて修正し再実行してもよい。
+
+9. Pending Review 方式でレビューを投稿する。手順は以下:
 
    1. `mcp__github__create_pending_pull_request_review` で pending レビューを作成する。
-   2. ステップ5で確定した各課題について `mcp__github__add_comment_to_pending_review` でインラインコメントを追加する。課題ゼロの場合はこのステップをスキップする。
-      - 単一行の修正: `line` に対象行番号、`subjectType: "LINE"` のみを指定する。`startLine` / `startSide` / `side` は指定しないこと。
-      - 複数行の修正: `startLine` と `line` で範囲を指定し、`startSide: "RIGHT"`、`side: "RIGHT"`、`subjectType: "LINE"` を指定する（追加された行が対象の場合）。`startLine` から `line` までの範囲がハイライトされ、その範囲全体が suggestion の内容で置き換えられる。
+   2. ステップ8で `resolved: true` になった各課題について `mcp__github__add_comment_to_pending_review` でインラインコメントを追加する。該当課題ゼロの場合はこのステップをスキップする。
+      - `line` / `startLine` / `side` / `startSide` / `subjectType` には**スクリプトが返した `params` の値をそのまま使う**（自分で決めない）。
+      - `body` は `commentBody` に、必要に応じて suggestion ブロック（```suggestion ... ```、中身は `suggestionBody`）を続けたもの。
       - `body` の方針:
         - 課題の概要を簡潔に記述する
         - 小規模で自己完結する修正の場合は、コミット可能なsuggestionブロック（```suggestion ... ```）を含める
         - 大規模な修正（6行以上、構造的変更、複数箇所にまたがる変更）の場合は、suggestionブロックは付けず、課題と修正方針を文章で記述する
         - 該当suggestionをコミットするだけで課題が完全に解消する場合に限り、コミット可能なsuggestionを投稿する。追加対応が必要な場合はsuggestionブロックを付けないこと。
+        - **行を削除する修正**では、`suggestionBody` から削除対象行を省くこと（`existingCode` の範囲がその行を含んでいるので、本文から省けば削除になる）。
    3. `mcp__github__submit_pending_pull_request_review` を `event: "COMMENT"` で送信する。`body` にはレビュー全体のサマリを含める:
-      - 課題が見つかった場合: 検出した課題の概要を記述する。
+      - 課題が見つかった場合: 検出した課題の概要を記述する。ステップ8で `resolved: false` になりインライン化できなかった課題があれば、ここに該当ファイル・箇所と内容を文章で記載する。
       - 課題が見つからなかった場合: 「問題は見つかりませんでした。バグ・プロジェクトルール（CLAUDE.md / .claude/rules/）準拠・REVIEW.md準拠を確認しました。」と記述する。
 
    **重要: 同一課題につき1コメントのみ投稿する。重複コメントを投稿しないこと。**
