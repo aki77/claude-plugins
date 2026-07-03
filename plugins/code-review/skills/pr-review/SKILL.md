@@ -1,7 +1,7 @@
 ---
 name: pr-review
 description: 指定されたGitHubプルリクエストに対して、複数の専門エージェント（CLAUDE.md準拠/バグ検出/REVIEW.md準拠）を並列起動して多角的なコードレビューを実施するスキル。
-allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh repo view:*), Bash(git rev-parse:*), Bash(git diff:*), Bash(node:*), Bash(jq:*), mcp__github__create_pending_pull_request_review, mcp__github__add_comment_to_pending_review, mcp__github__submit_pending_pull_request_review
+allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh pr diff:*), Bash(gh repo view:*), Bash(gh api:*), Bash(git rev-parse:*), Bash(git diff:*), Bash(node:*), Bash(jq:*)
 disable-model-invocation: true
 ---
 
@@ -47,25 +47,26 @@ disable-model-invocation: true
 9. 各課題の行番号を **スクリプトで確定する**。**行番号（`line` / `startLine`）を自分で推測して指定してはならない。** LLM が行番号を推測すると diff にマッピングできない指定（特に削除を伴う修正）になり、GitHub 側で位置解決に失敗して `line: null` 化する。手順:
    - ステップ8の各課題から `{ path, existingCode }` の配列を作り、`node ${CLAUDE_PLUGIN_ROOT}/scripts/resolve-suggestion-lines.mjs --pr <PR>` に **stdin で JSON を渡す**（`existingCode` の改行は `\n` としてJSONエスケープすること）。
    - スクリプトは各課題について diff hunk とテキストマッチして行番号を機械的に確定し、入力と同順の配列を返す:
-     - `{ resolved: true, params: { line, startLine?, side?, startSide?, subjectType } }`: `params` をそのまま `add_comment_to_pending_review` に渡す。
-     - `{ resolved: false, reason }`: 該当箇所を diff から一意に特定できなかった課題。**インラインコメントにせず**、ステップ10のレビューサマリ本文に文章で記載する（誤った位置に貼らない）。`existingCode` が diff と逐語一致していない可能性が高いので、必要なら `existingCode` を diff に合わせて修正し再実行してもよい。
+     - `{ path, resolved: true, params: { line, startLine?, side?, startSide?, subjectType } }`: 行番号確定に成功した課題。ステップ10でこの要素に `body` を足してそのまま投稿する（`params` は分解・再構成しない）。
+     - `{ path, resolved: false, reason }`: 該当箇所を diff から一意に特定できなかった課題。**インラインコメントにせず**、ステップ10のレビューサマリ本文に文章で記載する（誤った位置に貼らない）。`existingCode` が diff と逐語一致していない可能性が高いので、必要なら `existingCode` を diff に合わせて修正し再実行してもよい。
 
-10. Pending Review 方式でレビューを投稿する。手順は以下:
+10. レビュー（サマリ + インラインコメント）を **`post-review.mjs` で一括投稿する**。GitHub REST API の `POST /pulls/{n}/reviews` を1リクエストで叩き、サマリと全インラインコメントをまとめて送信する。手順は以下:
 
-   1. `mcp__github__create_pending_pull_request_review` で pending レビューを作成する。
-   2. ステップ9で `resolved: true` になった各課題について `mcp__github__add_comment_to_pending_review` でインラインコメントを追加する。該当課題ゼロの場合はこのステップをスキップする。
-      - `line` / `startLine` / `side` / `startSide` / `subjectType` には**スクリプトが返した `params` の値をそのまま使う**（自分で決めない）。
-      - `body` は `commentBody` に、必要に応じて suggestion ブロック（```suggestion ... ```、中身は `suggestionBody`）を続けたもの。
-      - `body` の方針:
-        - 課題の概要を簡潔に記述する
-        - 小規模で自己完結する修正の場合は、コミット可能なsuggestionブロック（```suggestion ... ```）を含める
-        - 大規模な修正（6行以上、構造的変更、複数箇所にまたがる変更）の場合は、suggestionブロックは付けず、課題と修正方針を文章で記述する
-        - 該当suggestionをコミットするだけで課題が完全に解消する場合に限り、コミット可能なsuggestionを投稿する。追加対応が必要な場合はsuggestionブロックを付けないこと。
-        - **行を削除する修正**では、`suggestionBody` から削除対象行を省くこと（`existingCode` の範囲がその行を含んでいるので、本文から省けば削除になる）。
-   3. `mcp__github__submit_pending_pull_request_review` を `event: "COMMENT"` で送信する。`body` にはレビュー全体のサマリを含める:
-      - 冒頭に、ステップ2のサマリエージェント出力を「変更概要」として簡潔に載せる（サマリが失敗していた場合は PRタイトル・説明文で代替する）。
-      - 課題が見つかった場合: 検出した課題の概要を記述する。ステップ9で `resolved: false` になりインライン化できなかった課題があれば、ここに該当ファイル・箇所と内容を文章で記載する。
-      - 課題が見つからなかった場合: 「問題は見つかりませんでした。バグ・プロジェクトルール（CLAUDE.md / .claude/rules/）準拠・REVIEW.md準拠を確認しました。」と記述する。
+   1. 投稿内容 JSON を組み立てる。形式は `{ summaryBody, comments: [ ...ステップ9の各要素に body を足したもの ] }`:
+      - `comments`: **ステップ9の resolve 出力の配列に、対応する課題（同順・同 index）の `body` を付与しただけ**の配列。resolve 出力を組み替えたり `params` を分解・再構成したりしないこと（構造ミスを避けるため、resolve が返した要素をそのまま使い body を1つ足すだけにする）。
+        - `resolved: false` の要素も**そのまま含めてよい**（post-review.mjs 側でインライン投稿対象から自動スキップされる。該当課題はサマリ本文で言及する）。
+        - `path` と `params` はステップ9が返した値をそのまま保持する（`line` / `startLine` / `side` / `startSide` / `subjectType` を自分で決めない）。
+        - `body`: `resolved: true` の要素にのみ付与する。`commentBody` に、必要に応じて suggestion ブロック（```suggestion ... ```、中身は `suggestionBody`）を続けたもの。方針:
+          - 課題の概要を簡潔に記述する
+          - 小規模で自己完結する修正の場合は、コミット可能なsuggestionブロック（```suggestion ... ```）を含める
+          - 大規模な修正（6行以上、構造的変更、複数箇所にまたがる変更）の場合は、suggestionブロックは付けず、課題と修正方針を文章で記述する
+          - 該当suggestionをコミットするだけで課題が完全に解消する場合に限り、コミット可能なsuggestionを投稿する。追加対応が必要な場合はsuggestionブロックを付けないこと。
+          - **行を削除する修正**では、`suggestionBody` から削除対象行を省くこと（`existingCode` の範囲がその行を含んでいるので、本文から省けば削除になる）。
+      - `summaryBody`: レビュー全体のサマリ:
+        - 冒頭に、ステップ2のサマリエージェント出力を「変更概要」として簡潔に載せる（サマリが失敗していた場合は PRタイトル・説明文で代替する）。
+        - 課題が見つかった場合: 検出した課題の概要を記述する。ステップ9で `resolved: false` になりインライン化できなかった課題があれば、ここに該当ファイル・箇所と内容を文章で記載する。
+        - 課題が見つからなかった場合: 「問題は見つかりませんでした。バグ・プロジェクトルール（CLAUDE.md / .claude/rules/）準拠・REVIEW.md準拠を確認しました。」と記述する。
+   2. この JSON を `node ${CLAUDE_PLUGIN_ROOT}/scripts/post-review.mjs --pr <PR> --commit <headRefOid>` に **stdin で渡す**（`--commit` にはステップ0で取得済みの `headRefOid` を使い、レビュー対象コミットを固定する）。スクリプトは入力を検証（`resolved:false` を自動スキップ、`resolved:true` なのに `params.line`/`body` を欠く要素はエラーで即失敗）してから `params` を REST API のフィールドへ内部変換し、`event: "COMMENT"` でレビューを1リクエスト投稿して、投稿されたレビューの URL を返す。エラーで失敗した場合は入力構造を見直して再実行する。
 
    **重要: 同一課題につき1コメントのみ投稿する。重複コメントを投稿しないこと。**
 
