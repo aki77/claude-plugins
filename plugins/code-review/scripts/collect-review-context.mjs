@@ -10,8 +10,9 @@ const cwd = process.cwd();
 // ---- レビュー対象外のデフォルト除外パターン ---------------------------------
 // レビューして意味のないファイル（生成物・ミニファイ・バイナリ）を機械的に除外する。
 // ロックファイル・スナップショットは含めない（有用な変更を誤って隠すリスクを避ける）。
-// プロジェクト側で追加除外したい場合は .gitattributes に `linguist-generated=true`
-// を付与する（detectLinguistGenerated が拾う）。
+// プロジェクト側で追加除外したい場合は .gitattributes に linguist 属性
+// （linguist-generated / linguist-vendored / linguist-documentation）を付与する。
+// 値なし記法（`path linguist-generated`）でも `=true` でも効く（detectLinguistExcluded が拾う）。
 // glob は path.matchesGlob（`fileMatchesPatterns`）で照合する純粋な文字列マッチ。
 const DEFAULT_EXCLUDE_GLOBS = [
   // ミニファイ / source map / 典型的なビルド生成物ディレクトリ
@@ -286,37 +287,59 @@ function fileMatchesPatterns(file, patterns) {
 }
 
 // ---- レビュー対象ファイルのフィルタリング ------------------------------------
-// .gitattributes で linguist-generated=true が付いた変更ファイルの集合を返す。
+// .gitattributes の linguist 除外属性が付いた変更ファイルの集合を返す。
+// 対象属性は GitHub linguist が言語統計から外すのと同じ3つ:
+//   linguist-generated / linguist-vendored / linguist-documentation
 // git check-attr を --stdin -z で一括問い合わせし、プロセス呼び出しを1回に抑える。
 // 変更ファイルが空なら git を呼ばず空の Set を返す。
-function detectLinguistGenerated(files) {
+const LINGUIST_EXCLUDE_ATTRS = [
+  "linguist-generated",
+  "linguist-vendored",
+  "linguist-documentation",
+];
+
+function detectLinguistExcluded(files) {
   if (files.length === 0) return new Set();
   const input = files.map((f) => f + "\0").join("");
   const out = execFileSync(
     "git",
-    ["check-attr", "--stdin", "-z", "linguist-generated"],
+    ["check-attr", "--stdin", "-z", ...LINGUIST_EXCLUDE_ATTRS],
     { input, encoding: "utf8" }
   );
-  // 出力は NUL 区切りで <path>\0<attr>\0<value>\0 の3つ組が繰り返される。
+  return parseCheckAttrOutput(out);
+}
+
+// git check-attr --stdin -z の出力をパースして、除外対象パスの Set を返す純粋関数。
+// 出力は NUL 区切りで <path>\0<attr>\0<value>\0 の3つ組が繰り返される。問い合わせた
+// 属性ごとに1つ組が出るため、同一パスが複数回現れる。value の意味:
+//   set … 値なし記法（`path linguist-generated`）／true・任意の値 … `=true`/`=1` 等で付与
+//   unspecified … 属性なし ／ unset … `-attr` で打ち消し ／ false … `=false`
+// GitHub linguist は「明示的な打ち消し以外の設定値」を override 有効として扱うため、
+// 除外は「無効値（unspecified/unset/false）でない」を判定する。こうすることで
+// `=1`・`=yes` のような set/true 以外の設定値でも取りこぼさない。
+const ATTR_NEGATIVE_VALUES = new Set(["unspecified", "unset", "false"]);
+
+function parseCheckAttrOutput(out) {
   const parts = out.split("\0");
-  const generated = new Set();
+  const excluded = new Set();
   for (let i = 0; i + 2 < parts.length; i += 3) {
-    if (parts[i + 2] === "true") generated.add(parts[i]);
+    if (!ATTR_NEGATIVE_VALUES.has(parts[i + 2])) excluded.add(parts[i]);
   }
-  return generated;
+  return excluded;
 }
 
 // 変更ファイルを「レビュー対象（kept）」と「除外（excluded）」に分類する純粋関数。
-// 除外条件: デフォルト glob にマッチ、または linguist-generated=true。
-// generatedSet / defaultGlobs を注入可能にして FS/プロセス非依存にテストする。
+// 除外条件: デフォルト glob にマッチ、または .gitattributes の linguist 属性
+// （generated/vendored/documentation）が付いている。
+// attrExcludedSet / defaultGlobs を注入可能にして FS/プロセス非依存にテストする。
 function classifyFiles(
   files,
-  { generatedSet = new Set(), defaultGlobs = DEFAULT_EXCLUDE_GLOBS } = {}
+  { attrExcludedSet = new Set(), defaultGlobs = DEFAULT_EXCLUDE_GLOBS } = {}
 ) {
   const kept = [];
   const excluded = [];
   for (const file of files) {
-    if (fileMatchesPatterns(file, defaultGlobs) || generatedSet.has(file)) {
+    if (fileMatchesPatterns(file, defaultGlobs) || attrExcludedSet.has(file)) {
       excluded.push(file);
     } else {
       kept.push(file);
@@ -483,16 +506,16 @@ if (!process.env.NODE_TEST_CONTEXT) {
     }
   }
 
-  // レビュー対象外（生成物・バイナリ・linguist-generated）を機械的に除外する。
+  // レビュー対象外（生成物・バイナリ・linguist 属性付き）を機械的に除外する。
   // 除外したファイルは excludedFiles として明示し、暗黙のスキップにしない。
   // 先にデフォルト glob で除外できるものを外し、残りだけ git check-attr に問い合わせる
   // （バイナリ多数の diff で check-attr へ渡すパスを減らす）。
   const globSurvivors = rawFiles.filter(
     (f) => !fileMatchesPatterns(f, DEFAULT_EXCLUDE_GLOBS)
   );
-  const generatedSet = detectLinguistGenerated(globSurvivors);
+  const attrExcludedSet = detectLinguistExcluded(globSurvivors);
   const { kept: changedFiles, excluded: excludedFiles } = classifyFiles(rawFiles, {
-    generatedSet,
+    attrExcludedSet,
   });
 
   const rules = await collectRules(changedFiles);
@@ -670,12 +693,46 @@ if (process.env.NODE_TEST_CONTEXT) {
     assert.deepEqual(excluded, []);
   });
 
-  test("classifyFiles: linguist-generated（generatedSet 注入）を除外する", () => {
+  test("classifyFiles: linguist 属性（attrExcludedSet 注入）を除外する", () => {
     const files = ["src/a.rb", "src/generated_schema.rb"];
-    const generatedSet = new Set(["src/generated_schema.rb"]);
-    const { kept, excluded } = classifyFiles(files, { generatedSet });
+    const attrExcludedSet = new Set(["src/generated_schema.rb"]);
+    const { kept, excluded } = classifyFiles(files, { attrExcludedSet });
     assert.deepEqual(kept, ["src/a.rb"]);
     assert.deepEqual(excluded, ["src/generated_schema.rb"]);
+  });
+
+  test("parseCheckAttrOutput: 値ごとの除外判定（無効値以外は除外）", () => {
+    // 設定値（set/true/任意の値）→ 除外、無効値（unspecified/unset/false）→ 除外しない
+    const cases = [
+      ["set", true], // 値なし記法（`path linguist-generated`）
+      ["true", true], // `=true`
+      ["1", true], // `=1`（linguist は打ち消し以外の設定値を有効扱い）
+      ["yes", true], // `=yes`
+      ["unspecified", false], // 属性なし
+      ["unset", false], // `-attr` で打ち消し
+      ["false", false], // `=false`
+    ];
+    for (const [value, excluded] of cases) {
+      const out = `f.rb\0linguist-generated\0${value}\0`;
+      assert.deepEqual(
+        [...parseCheckAttrOutput(out)],
+        excluded ? ["f.rb"] : [],
+        `value=${value}`
+      );
+    }
+  });
+
+  test("parseCheckAttrOutput: 3属性が並び、いずれか設定値なら含める", () => {
+    // vendor/x.rb は vendored のみ set、他2属性は unspecified
+    const out =
+      "vendor/x.rb\0linguist-generated\0unspecified\0" +
+      "vendor/x.rb\0linguist-vendored\0set\0" +
+      "vendor/x.rb\0linguist-documentation\0unspecified\0";
+    assert.deepEqual([...parseCheckAttrOutput(out)], ["vendor/x.rb"]);
+  });
+
+  test("parseCheckAttrOutput: 空出力は空 Set", () => {
+    assert.deepEqual([...parseCheckAttrOutput("")], []);
   });
 
   test("classifyFiles: defaultGlobs を注入してテストできる", () => {
