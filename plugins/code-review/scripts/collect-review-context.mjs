@@ -1,10 +1,36 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { glob } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const cwd = process.cwd();
+
+// ---- レビュー対象外のデフォルト除外パターン ---------------------------------
+// レビューして意味のないファイル（生成物・ミニファイ・バイナリ）を機械的に除外する。
+// ロックファイル・スナップショットは含めない（有用な変更を誤って隠すリスクを避ける）。
+// プロジェクト側で追加除外したい場合は .gitattributes に `linguist-generated=true`
+// を付与する（detectLinguistGenerated が拾う）。
+// glob は path.matchesGlob（`fileMatchesPatterns`）で照合する純粋な文字列マッチ。
+const DEFAULT_EXCLUDE_GLOBS = [
+  // ミニファイ / source map / 典型的なビルド生成物ディレクトリ
+  // `**/dist/**` は `**` が0セグメントにマッチするためトップレベルの `dist/x` も拾う
+  // （`dist/**` は不要）。
+  "**/*.min.js",
+  "**/*.min.css",
+  "**/*.map",
+  "**/dist/**",
+  "**/build/**",
+  // 画像バイナリ（SVG はテキスト diff として有用なので含めない）
+  "**/*.{png,jpg,jpeg,gif,webp,ico,bmp,avif,heic}",
+  // フォント
+  "**/*.{woff,woff2,ttf,eot,otf}",
+  // 圧縮・アーカイブ・ドキュメントバイナリ
+  "**/*.{pdf,zip,gz,tgz,bz2,xz,7z,rar,jar}",
+  // 動画・音声
+  "**/*.{mp4,mov,webm,avi,mkv,mp3,wav,flac,ogg}",
+];
 
 // ---- 引数パース --------------------------------------------------------------
 // --pr <PR>      : GitHub PR の変更ファイルを対象にする
@@ -26,10 +52,10 @@ function parseArgs(argv) {
 function usage() {
   console.error(
     "Usage:\n" +
-      "  collect-rules.mjs --pr <PR>\n" +
-      "  collect-rules.mjs --range [<range>]\n" +
-      "例: collect-rules.mjs --pr 123\n" +
-      "    collect-rules.mjs --range main"
+      "  collect-review-context.mjs --pr <PR>\n" +
+      "  collect-review-context.mjs --range [<range>]\n" +
+      "例: collect-review-context.mjs --pr 123\n" +
+      "    collect-review-context.mjs --range main"
   );
   process.exit(1);
 }
@@ -122,7 +148,7 @@ function resolveRange(arg) {
 
   console.error(
     "Error: ベースブランチを自動解決できませんでした。\n" +
-      "引数として範囲を明示してください。例: collect-rules.mjs --range main"
+      "引数として範囲を明示してください。例: collect-review-context.mjs --range main"
   );
   process.exit(1);
 }
@@ -217,6 +243,57 @@ async function listRuleFiles() {
 // 姉妹スクリプト（plan-rule-review の collect-plan-rules.mjs）と同じ方式。
 function fileMatchesPatterns(file, patterns) {
   return patterns.some((pattern) => path.matchesGlob(file, pattern));
+}
+
+// ---- レビュー対象ファイルのフィルタリング ------------------------------------
+// .gitattributes で linguist-generated=true が付いた変更ファイルの集合を返す。
+// git check-attr を --stdin -z で一括問い合わせし、プロセス呼び出しを1回に抑える。
+// 変更ファイルが空なら git を呼ばず空の Set を返す。
+function detectLinguistGenerated(files) {
+  if (files.length === 0) return new Set();
+  const input = files.map((f) => f + "\0").join("");
+  const out = execFileSync(
+    "git",
+    ["check-attr", "--stdin", "-z", "linguist-generated"],
+    { input, encoding: "utf8" }
+  );
+  // 出力は NUL 区切りで <path>\0<attr>\0<value>\0 の3つ組が繰り返される。
+  const parts = out.split("\0");
+  const generated = new Set();
+  for (let i = 0; i + 2 < parts.length; i += 3) {
+    if (parts[i + 2] === "true") generated.add(parts[i]);
+  }
+  return generated;
+}
+
+// 変更ファイルを「レビュー対象（kept）」と「除外（excluded）」に分類する純粋関数。
+// 除外条件: デフォルト glob にマッチ、または linguist-generated=true。
+// generatedSet / defaultGlobs を注入可能にして FS/プロセス非依存にテストする。
+function classifyFiles(
+  files,
+  { generatedSet = new Set(), defaultGlobs = DEFAULT_EXCLUDE_GLOBS } = {}
+) {
+  const kept = [];
+  const excluded = [];
+  for (const file of files) {
+    if (fileMatchesPatterns(file, defaultGlobs) || generatedSet.has(file)) {
+      excluded.push(file);
+    } else {
+      kept.push(file);
+    }
+  }
+  return { kept, excluded };
+}
+
+// 除外パス配列から、diff 取得コマンド向けの除外引数を組み立てる純粋関数。
+// SKILL 側はこれを jq で取り出してコマンドへそのまま連結する（LLM に組み立てさせない）。
+//   gh:  `gh pr diff <PR> --exclude p1 --exclude p2 ...`
+//   git: `git diff <diffArgs> -- . ':(exclude)p1' ':(exclude)p2' ...`
+function buildExcludeArgs(excludedFiles) {
+  if (excludedFiles.length === 0) return { gh: [], git: [] };
+  const gh = excludedFiles.flatMap((p) => ["--exclude", p]);
+  const git = ["--", ".", ...excludedFiles.map((p) => `:(exclude)${p}`)];
+  return { gh, git };
 }
 
 // PR/range 全体で「適用されうる」ルール一覧を収集する。
@@ -346,39 +423,63 @@ if (!process.env.NODE_TEST_CONTEXT) {
   const opts = parseArgs(process.argv);
 
   let range;
-  let changedFiles;
+  let rawFiles;
   if (opts.mode === "pr") {
-    changedFiles = getChangedFilesFromPr(opts.pr);
+    rawFiles = getChangedFilesFromPr(opts.pr);
   } else {
     // 引数なし実行 かつ ステージ済み変更あり → staged モード（コミット前レビュー）。
     // それ以外は range を解決する。range の有無で staged / range を判別する。
     const staged = opts.range ? [] : getStagedFiles();
     if (staged.length > 0) {
-      changedFiles = staged;
+      rawFiles = staged;
     } else {
       range = resolveRange(opts.range);
-      changedFiles = getChangedFilesFromRange(range);
+      rawFiles = getChangedFilesFromRange(range);
     }
   }
+
+  // レビュー対象外（生成物・バイナリ・linguist-generated）を機械的に除外する。
+  // 除外したファイルは excludedFiles として明示し、暗黙のスキップにしない。
+  // 先にデフォルト glob で除外できるものを外し、残りだけ git check-attr に問い合わせる
+  // （バイナリ多数の diff で check-attr へ渡すパスを減らす）。
+  const globSurvivors = rawFiles.filter(
+    (f) => !fileMatchesPatterns(f, DEFAULT_EXCLUDE_GLOBS)
+  );
+  const generatedSet = detectLinguistGenerated(globSurvivors);
+  const { kept: changedFiles, excluded: excludedFiles } = classifyFiles(rawFiles, {
+    generatedSet,
+  });
 
   const rules = await collectRules(changedFiles);
   const assignments = buildAssignments(changedFiles, rules);
 
-  const output = { assignments };
+  // source は全モードで出力する。PR モードでは diffArgs / range を持たない。
+  const source = opts.mode === "pr" ? "pr" : range ? "range" : "staged";
+  const output = {
+    source,
+    changedFiles,
+    excludedFiles,
+    // 各 diff 取得コマンド向けの除外引数（SKILL 側は jq で取り出して連結するだけ）。
+    excludeArgs: buildExcludeArgs(excludedFiles),
+    assignments,
+  };
   if (opts.mode === "range") {
-    // range があれば range モード、なければ staged モード。diffArgs は後続の
-    // `git diff <diffArgs>` 用引数（SKILL 側の差分取得を一様化する）。
-    output.source = range ? "range" : "staged";
+    // diffArgs は後続の `git diff <diffArgs>` 用引数（SKILL 側の差分取得を一様化する）。
     output.diffArgs = range ? [range] : ["--staged"];
     if (range) output.range = range;
-    output.changedFiles = changedFiles;
   }
 
-  console.log(JSON.stringify(output, null, 2));
+  // 出力は一時ファイルへ書き、そのパスだけを stdout に返す。後続ステップは jq で
+  // このファイルから必要な値のみを取り出す（LLM に JSON を解釈させない）。
+  // 1プロセス1ファイルなので pid で一意。ファイルは後続ステップが読み終わるまで
+  // 残す必要があるため明示削除はせず、OS の一時ディレクトリ回収に委ねる。
+  const outPath = path.join(tmpdir(), `code-review-context-${process.pid}.json`);
+  writeFileSync(outPath, JSON.stringify(output, null, 2));
+  console.log(outPath);
 }
 
 // ---- インラインテスト --------------------------------------------------------
-// `node --test plugins/code-review/scripts/collect-rules.mjs` で実行する。
+// `node --test plugins/code-review/scripts/collect-review-context.mjs` で実行する。
 // 参照: https://github.com/nodejs/node/issues/48956
 // FS に依存しない純粋ロジック（glob 照合・frontmatter パース・バケット配置）を検証する。
 // buildAssignments は resolveRules を注入して FS 非依存にテストする。
@@ -499,5 +600,59 @@ if (process.env.NODE_TEST_CONTEXT) {
     const a = build(["models/user.rb"]);
     const file = a.flatMap((b) => b.files).find((f) => f.path === "models/user.rb");
     assert.deepEqual(file.rules.sort(), ["CLAUDE.md", "app-models", "comment"].sort());
+  });
+
+  test("classifyFiles: デフォルト glob（ミニファイ/生成物/バイナリ）を除外する", () => {
+    const files = [
+      "src/app.js",
+      "dist/bundle.js",
+      "assets/app.min.js",
+      "public/logo.png",
+      "docs/guide.md",
+    ];
+    const { kept, excluded } = classifyFiles(files);
+    assert.deepEqual(kept, ["src/app.js", "docs/guide.md"]);
+    assert.deepEqual(excluded.sort(), [
+      "assets/app.min.js",
+      "dist/bundle.js",
+      "public/logo.png",
+    ]);
+  });
+
+  test("classifyFiles: SVG はテキスト diff として保持する", () => {
+    const { kept, excluded } = classifyFiles(["icons/menu.svg"]);
+    assert.deepEqual(kept, ["icons/menu.svg"]);
+    assert.deepEqual(excluded, []);
+  });
+
+  test("classifyFiles: linguist-generated（generatedSet 注入）を除外する", () => {
+    const files = ["src/a.rb", "src/generated_schema.rb"];
+    const generatedSet = new Set(["src/generated_schema.rb"]);
+    const { kept, excluded } = classifyFiles(files, { generatedSet });
+    assert.deepEqual(kept, ["src/a.rb"]);
+    assert.deepEqual(excluded, ["src/generated_schema.rb"]);
+  });
+
+  test("classifyFiles: defaultGlobs を注入してテストできる", () => {
+    const { kept, excluded } = classifyFiles(["a.gen", "b.rb"], {
+      defaultGlobs: ["**/*.gen"],
+    });
+    assert.deepEqual(kept, ["b.rb"]);
+    assert.deepEqual(excluded, ["a.gen"]);
+  });
+
+  test("buildExcludeArgs: 空配列なら gh/git とも空", () => {
+    assert.deepEqual(buildExcludeArgs([]), { gh: [], git: [] });
+  });
+
+  test("buildExcludeArgs: 複数パスを gh/git 向け引数に組み立てる", () => {
+    const args = buildExcludeArgs(["dist/a.js", "b.png"]);
+    assert.deepEqual(args.gh, ["--exclude", "dist/a.js", "--exclude", "b.png"]);
+    assert.deepEqual(args.git, [
+      "--",
+      ".",
+      ":(exclude)dist/a.js",
+      ":(exclude)b.png",
+    ]);
   });
 }

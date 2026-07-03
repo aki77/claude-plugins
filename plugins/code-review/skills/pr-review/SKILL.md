@@ -1,7 +1,7 @@
 ---
 name: pr-review
 description: 指定されたGitHubプルリクエストに対して、複数の専門エージェント（CLAUDE.md準拠/バグ検出/REVIEW.md準拠）を並列起動して多角的なコードレビューを実施するスキル。
-allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(git rev-parse:*), Bash(node:*), mcp__github__create_pending_pull_request_review, mcp__github__add_comment_to_pending_review, mcp__github__submit_pending_pull_request_review
+allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(git rev-parse:*), Bash(node:*), Bash(jq:*), mcp__github__create_pending_pull_request_review, mcp__github__add_comment_to_pending_review, mcp__github__submit_pending_pull_request_review
 disable-model-invocation: true
 ---
 
@@ -19,17 +19,22 @@ disable-model-invocation: true
    - 両者が**完全一致しない**場合は、レビューを行わずに次の旨を報告して**処理を終了する**: 「ローカルの HEAD が PR #<PR> の HEAD（`<headRefOid>`）と一致しません（ローカル: `<localSha>`）。このスキルはルールファイルをローカルから読むため、対象 PR のブランチをチェックアウト（または最新化）してから再実行してください。」
    - 一致する場合のみ、以降のステップに進む。
 
-1. `node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-rules.mjs --pr <PR>` を実行して、PR変更ファイルへのプロジェクトルール適用結果をJSONで取得する。なお、ルール（CLAUDE.md と `.claude/rules/`）はローカル作業ツリーから読み込むため、ステップ0の一致確認が前提となる。スクリプトは各変更ファイルにどのルール（CLAUDE.md と `.claude/rules/`）が適用されるかを決定論的に算出し、エージェント1・2の担当割り当てとして出力する。標準出力の形式は以下:
+1. `node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-review-context.mjs --pr <PR>` を実行して、PR変更ファイルへのレビュー準備情報（レビュー対象フィルタ結果 + プロジェクトルール適用結果）を取得する。なお、ルール（CLAUDE.md と `.claude/rules/`）および `.gitattributes`（後述の除外判定に使う）はローカル作業ツリーから読み込むため、ステップ0の一致確認が前提となる。**スクリプトは結果を一時ファイルに書き出し、そのパスのみを標準出力に1行で返す。** このパスを変数に束ねて以降のステップで使い回し、必要な値は `jq` で取り出すこと（例: `CTX=$(node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-review-context.mjs --pr <PR>)`）。JSON の形式は以下:
+   - `changedFiles`: レビュー対象の変更ファイル一覧（下記フィルタで除外されたものは含まれない）。
+   - `excludedFiles`: レビュー対象から**機械的に除外**した変更ファイル一覧（生成物・ミニファイ・バイナリ、または `.gitattributes` の `linguist-generated=true`）。**具体的な除外条件はスクリプトが確定済みで、この配列が唯一の正**。SKILL 側で条件を再判定・列挙しないこと。
+   - `excludeArgs`: 除外ファイルを diff から落とすための、コマンド別の**組み立て済み引数**。`excludeArgs.gh` は `gh pr diff` 用（`--exclude <path>` の繰り返し）。除外ファイルが無ければ空配列。以降 `gh pr diff <PR>` を叩くときは必ずこの引数を連結する（下記）。
    - `assignments`: エージェント1・2への担当割り当て（2要素の配列。`assignments[0]` がエージェント1用、`assignments[1]` がエージェント2用）。各要素は `files` を持ち、`files` は `{ path, rules }` の配列。
      - `path`: 担当する変更ファイルのパス。
      - `rules`: そのファイルに適用されるルールファイルのパス一覧（適用される CLAUDE.md と `.claude/rules/` を区別なく列挙。親ディレクトリのCLAUDE.md・`paths` がそのファイルに一致する `.claude/rules/`・`paths` 未指定の全適用ルールがすべて含まれ、一致しないルールは含まれない）。スコープ判定はスクリプトが済ませているため、エージェントは `rules` をそのまま参照すればよい。
-   - 適用ルールセットが同一のファイルが同一エージェントに寄せられ、かつ各エージェントが担当ファイルに不要なルールを読まずに済むよう、スクリプトが決定論的に振り分け済み。
+   - `assignments` は `excludedFiles` を除いた `changedFiles` のみを対象に組まれている（エージェント1・2は自動的に除外ファイルをスキップする）。適用ルールセットが同一のファイルが同一エージェントに寄せられ、かつ各エージェントが担当ファイルに不要なルールを読まずに済むよう、スクリプトが決定論的に振り分け済み。
+
+   **以降 `gh pr diff <PR>` を実行するすべての箇所では、`jq -r '.excludeArgs.gh[]' "$CTX"` で取り出した引数を連結し、`gh pr diff <PR> $(jq -r '.excludeArgs.gh[]' "$CTX")` として実行すること**（除外ファイルが無ければ引数は空になり従来と同じ）。これによりエージェント3・4・5 やサマリエージェントが読む diff からも生成物・バイナリが除かれる。
 
 2. Sonnetエージェントを起動し、以下の情報から変更内容のサマリを返す。ステップ1と並列で実行してよい（ステップ1の結果に依存しない）。
    - `gh pr view <PR> --json title,body,commits --jq '{title: .title, body: .body, commits: [.commits[] | {headline: .messageHeadline, body: .messageBody}]}'`: PRタイトル・説明文・コミットメッセージ一覧（変更の意図・WHYを把握するため）
-   - `gh pr diff <PR>`: 差分テキスト（変更の具体的な内容を把握するため）
+   - `gh pr diff <PR> $(jq -r '.excludeArgs.gh[]' "$CTX")`: 差分テキスト（変更の具体的な内容を把握するため。レビュー対象外ファイルを除外した diff）
 
-3. 5つのエージェントを並列で起動し、変更内容を独立してレビューする。各エージェントは、課題の説明と指摘理由（例: 「CLAUDE.md準拠」「バグ」「REVIEW.md準拠」）を含む課題リストを返す。各エージェントの役割は以下の通り:
+3. 5つのエージェントを並列で起動し、変更内容を独立してレビューする。各エージェントは、課題の説明と指摘理由（例: 「CLAUDE.md準拠」「バグ」「REVIEW.md準拠」）を含む課題リストを返す。**diff を取得するエージェント（3・4・5）には `gh pr diff <PR> $(jq -r '.excludeArgs.gh[]' "$CTX")`（レビュー対象外ファイルを除外した diff）を使わせること。** 各エージェントの役割は以下の通り:
 
    エージェント1, 2: プロジェクトルール準拠チェック（Sonnet）
    エージェント1はステップ1の `assignments[0].files`、エージェント2は `assignments[1].files` を担当し、並列でプロジェクトルール（CLAUDE.md および `.claude/rules/` 配下のルールファイル）への準拠を監査する。担当ファイルの振り分けはステップ1のスクリプトが決定済みのため、エージェント側で再分配しないこと。`assignments[1].files` が空の場合（全ファイルが1エージェントに収まる場合）はエージェント2を起動しないこと。各ファイルに適用すべきルールは `files[i].rules` に列挙済み（スコープ判定はスクリプトが完了している）。**あるファイルのレビューでは、そのファイルの `rules` に列挙されたルールファイルのみを適用すること。`rules` に含まれないルールでそのファイルを指摘しないこと。**
@@ -80,6 +85,7 @@ disable-model-invocation: true
 6. レビュー結果のサマリをターミナルに出力する:
    - 課題が見つかった場合は、それぞれの簡潔な説明を一覧表示する。
    - 課題が見つからなかった場合は、「問題は見つかりませんでした。バグ・プロジェクトルール（CLAUDE.md / .claude/rules/）準拠・REVIEW.md準拠を確認しました。」と表示する。
+   - `excludedFiles` が空でない場合は、末尾に「レビュー対象外: N ファイル（生成物/バイナリ等）」と件数を明示し、対象ファイル名を一覧する（`jq -r '.excludedFiles | length' "$CTX"` と `jq -r '.excludedFiles[]' "$CTX"` を使う）。暗黙にスキップしたと誤解されないよう、必ず表示すること。
 
    `--comment` 引数が指定されていない場合は、ここで処理を停止する。GitHubへの投稿は行わないこと。
 
