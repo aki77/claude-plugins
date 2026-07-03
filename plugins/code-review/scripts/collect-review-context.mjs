@@ -61,15 +61,55 @@ function usage() {
 }
 
 // ---- 変更ファイル取得 --------------------------------------------------------
-function getChangedFilesFromPr(pr) {
-  const out = execFileSync("gh", ["pr", "diff", pr, "--name-only"], {
+// PR の base 先端（baseRefOid）を解決し、ローカル three-dot range `<baseRefOid>...HEAD`
+// を返す。diff 取得を PR/local 両モードで完全に同型（ローカル git diff）にするための要。
+// ステップ0で「ローカル HEAD == PR headRefOid」が保証されているため、この three-dot
+// range の merge base は GitHub の PR base と一致する。base コミットがローカルに無い
+// （fork PR / shallow clone）場合は actionable なメッセージで throw する。
+// exec は依存注入（既存テストスタイルに合わせ、FS/プロセス非依存でテストするため）。
+function resolvePrBaseRange(pr, { exec = execFileSync } = {}) {
+  const raw = exec("gh", ["pr", "view", pr, "--json", "baseRefOid,baseRefName"], {
     encoding: "utf8",
   });
-  return splitLines(out);
+  const meta = JSON.parse(raw);
+  const baseRefOid = meta.baseRefOid;
+  const baseRefName = meta.baseRefName;
+  if (!baseRefOid) {
+    throw new Error(
+      `PR #${pr} の baseRefOid を取得できませんでした（gh pr view の出力に baseRefOid がありません）。`
+    );
+  }
+
+  // base コミットがローカルに存在するか。fork PR / shallow clone では欠落しうる。
+  try {
+    exec("git", ["cat-file", "-e", `${baseRefOid}^{commit}`], {
+      encoding: "utf8",
+    });
+  } catch {
+    throw new Error(
+      `PR #${pr} の base コミット（${baseRefOid}）がローカルに存在しません。` +
+        `\`git fetch origin ${baseRefName}\` を実行して再実行してください` +
+        `（fork PR の場合は base リポジトリの remote を指定）。`
+    );
+  }
+
+  // three-dot の merge base を計算できるか。shallow clone では失敗しうる。
+  try {
+    exec("git", ["merge-base", baseRefOid, "HEAD"], { encoding: "utf8" });
+  } catch {
+    throw new Error(
+      `PR #${pr} の base（${baseRefOid}）と HEAD の merge base を計算できませんでした。` +
+        `\`git fetch --unshallow\` または \`git fetch origin ${baseRefName}\` を実行して再実行してください。`
+    );
+  }
+
+  return `${baseRefOid}...HEAD`;
 }
 
 function getChangedFilesFromRange(range) {
-  const out = execFileSync("git", ["diff", "--name-only", range], {
+  // GitHub は常時 rename 検出のため --find-renames を明示する
+  // （diff.renames=false なリポジトリでの列挙差異を防ぐ）。
+  const out = execFileSync("git", ["diff", "--name-only", "--find-renames", range], {
     encoding: "utf8",
   });
   return splitLines(out);
@@ -287,13 +327,12 @@ function classifyFiles(
 
 // 除外パス配列から、diff 取得コマンド向けの除外引数を組み立てる純粋関数。
 // SKILL 側はこれを jq で取り出してコマンドへそのまま連結する（LLM に組み立てさせない）。
-//   gh:  `gh pr diff <PR> --exclude p1 --exclude p2 ...`
 //   git: `git diff <diffArgs> -- . ':(exclude)p1' ':(exclude)p2' ...`
+// diff 取得は PR/local 両モードともローカル git diff に統一されたため、git キーのみ。
 function buildExcludeArgs(excludedFiles) {
-  if (excludedFiles.length === 0) return { gh: [], git: [] };
-  const gh = excludedFiles.flatMap((p) => ["--exclude", p]);
+  if (excludedFiles.length === 0) return { git: [] };
   const git = ["--", ".", ...excludedFiles.map((p) => `:(exclude)${p}`)];
-  return { gh, git };
+  return { git };
 }
 
 // PR/range 全体で「適用されうる」ルール一覧を収集する。
@@ -425,7 +464,13 @@ if (!process.env.NODE_TEST_CONTEXT) {
   let range;
   let rawFiles;
   if (opts.mode === "pr") {
-    rawFiles = getChangedFilesFromPr(opts.pr);
+    try {
+      range = resolvePrBaseRange(opts.pr);
+    } catch (err) {
+      console.error(`Error: ${err.message}`);
+      process.exit(1);
+    }
+    rawFiles = getChangedFilesFromRange(range);
   } else {
     // 引数なし実行 かつ ステージ済み変更あり → staged モード（コミット前レビュー）。
     // それ以外は range を解決する。range の有無で staged / range を判別する。
@@ -453,7 +498,8 @@ if (!process.env.NODE_TEST_CONTEXT) {
   const rules = await collectRules(changedFiles);
   const assignments = buildAssignments(changedFiles, rules);
 
-  // source は全モードで出力する。PR モードでは diffArgs / range を持たない。
+  // source は全モードで出力する。PR モードもローカル range に統一されたため、diffArgs /
+  // range を持つ（PR は `<baseRefOid>...HEAD`、staged は `--staged`）。
   const source = opts.mode === "pr" ? "pr" : range ? "range" : "staged";
   const output = {
     source,
@@ -462,12 +508,11 @@ if (!process.env.NODE_TEST_CONTEXT) {
     // 各 diff 取得コマンド向けの除外引数（SKILL 側は jq で取り出して連結するだけ）。
     excludeArgs: buildExcludeArgs(excludedFiles),
     assignments,
+    // diffArgs は後続の `git diff <diffArgs>` 用引数（全モードで SKILL 側の差分取得を一様化）。
+    diffArgs: range ? [range] : ["--staged"],
   };
-  if (opts.mode === "range") {
-    // diffArgs は後続の `git diff <diffArgs>` 用引数（SKILL 側の差分取得を一様化する）。
-    output.diffArgs = range ? [range] : ["--staged"];
-    if (range) output.range = range;
-  }
+  // range は PR モードと range モードで存在する（staged モードでは存在しない）。
+  if (range) output.range = range;
 
   // 出力は一時ファイルへ書き、そのパスだけを stdout に返す。後続ステップは jq で
   // このファイルから必要な値のみを取り出す（LLM に JSON を解釈させない）。
@@ -641,18 +686,78 @@ if (process.env.NODE_TEST_CONTEXT) {
     assert.deepEqual(excluded, ["a.gen"]);
   });
 
-  test("buildExcludeArgs: 空配列なら gh/git とも空", () => {
-    assert.deepEqual(buildExcludeArgs([]), { gh: [], git: [] });
+  test("buildExcludeArgs: 空配列なら git は空", () => {
+    assert.deepEqual(buildExcludeArgs([]), { git: [] });
   });
 
-  test("buildExcludeArgs: 複数パスを gh/git 向け引数に組み立てる", () => {
+  test("buildExcludeArgs: 複数パスを git 向け引数に組み立てる", () => {
     const args = buildExcludeArgs(["dist/a.js", "b.png"]);
-    assert.deepEqual(args.gh, ["--exclude", "dist/a.js", "--exclude", "b.png"]);
     assert.deepEqual(args.git, [
       "--",
       ".",
       ":(exclude)dist/a.js",
       ":(exclude)b.png",
     ]);
+  });
+
+  // resolvePrBaseRange: exec を関数注入スタブ化し、実 gh/git を呼ばずに検証する。
+  // stub は (cmd, args) を受け取り、想定コマンドに応じた文字列を返す/throw する。
+  test("resolvePrBaseRange: 正常系は <baseRefOid>...HEAD を返す", () => {
+    const exec = (cmd, args) => {
+      if (cmd === "gh") {
+        return JSON.stringify({ baseRefOid: "abc123", baseRefName: "main" });
+      }
+      // git cat-file / merge-base はどちらも成功（空文字返却）
+      return "";
+    };
+    assert.equal(resolvePrBaseRange("7", { exec }), "abc123...HEAD");
+  });
+
+  test("resolvePrBaseRange: base コミット不在は fetch 指示を含めて throw", () => {
+    const exec = (cmd, args) => {
+      if (cmd === "gh") {
+        return JSON.stringify({ baseRefOid: "abc123", baseRefName: "main" });
+      }
+      if (cmd === "git" && args[0] === "cat-file") {
+        throw new Error("not found");
+      }
+      return "";
+    };
+    assert.throws(() => resolvePrBaseRange("7", { exec }), (err) => {
+      assert.match(err.message, /git fetch origin main/);
+      return true;
+    });
+  });
+
+  test("resolvePrBaseRange: merge-base 不能（shallow）は --unshallow を含めて throw", () => {
+    const exec = (cmd, args) => {
+      if (cmd === "gh") {
+        return JSON.stringify({ baseRefOid: "abc123", baseRefName: "main" });
+      }
+      if (cmd === "git" && args[0] === "merge-base") {
+        throw new Error("shallow");
+      }
+      return "";
+    };
+    assert.throws(() => resolvePrBaseRange("7", { exec }), (err) => {
+      assert.match(err.message, /--unshallow/);
+      return true;
+    });
+  });
+
+  test("resolvePrBaseRange: baseRefOid 欠落は throw", () => {
+    const exec = (cmd) => {
+      if (cmd === "gh") return JSON.stringify({ baseRefName: "main" });
+      return "";
+    };
+    assert.throws(() => resolvePrBaseRange("7", { exec }), /baseRefOid/);
+  });
+
+  test("resolvePrBaseRange: 不正 JSON は throw", () => {
+    const exec = (cmd) => {
+      if (cmd === "gh") return "not json";
+      return "";
+    };
+    assert.throws(() => resolvePrBaseRange("7", { exec }));
   });
 }
