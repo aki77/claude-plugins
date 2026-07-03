@@ -23,10 +23,10 @@ disable-model-invocation: true
    - `source`: レビュー対象の種別。`"range"`（git range のコミット差分）または `"staged"`（ステージ済み変更）。
    - `diffArgs`: 後続ステップで `git diff` に渡す引数の配列。range モードでは `[<range>]`、staged モードでは `["--staged"]`。以降の差分取得はこの値を使い `git diff <diffArgs>` として一様に実行する。
    - `range`: 解決済みの git range（例: `abc123...HEAD`）。`source` が `"range"` のときのみ存在する（staged モードでは存在しない）。
-   - `changedFiles`: レビュー対象の変更ファイル一覧（下記フィルタで除外されたものは含まれない）。
-   - `excludedFiles`: レビュー対象から**機械的に除外**した変更ファイル一覧（生成物・ミニファイ・バイナリ、または `.gitattributes` の `linguist-generated=true`）。**具体的な除外条件はスクリプトが確定済みで、この配列が唯一の正**。SKILL 側で条件を再判定・列挙しないこと。
+   - `changedFiles`: レビュー対象の変更ファイルパスの**文字列配列**（オブジェクトではない。例: `["a/b.ts", "c/d.rb"]`。下記フィルタで除外されたものは含まれない）。取り出すときは `.path` を付けず `jq -r '.changedFiles[]' "$CTX"` とすること。
+   - `excludedFiles`: レビュー対象から**機械的に除外**した変更ファイル一覧。`changedFiles` と同型の**文字列配列**（生成物・ミニファイ・バイナリ、または `.gitattributes` の `linguist-generated=true`）。**具体的な除外条件はスクリプトが確定済みで、この配列が唯一の正**。SKILL 側で条件を再判定・列挙しないこと。
    - `excludeArgs`: 除外ファイルを diff から落とすための、コマンド別の**組み立て済み引数**。`excludeArgs.git` は `git diff` 用（`-- . ':(exclude)<path>' ...`）。除外ファイルが無ければ空配列。
-   - `assignments`: エージェント1・2への担当割り当て（2要素の配列。`assignments[0]` がエージェント1用、`assignments[1]` がエージェント2用）。各要素は `files` を持ち、`files` は `{ path, rules }` の配列。
+   - `assignments`: エージェント1・2への担当割り当て（2要素の配列。`assignments[0]` がエージェント1用、`assignments[1]` がエージェント2用）。**`changedFiles`/`excludedFiles`（文字列配列）とは異なり**、各要素は `files` を持ち、`files` は `{ path, rules }` の**オブジェクト配列**。
      - `path`: 担当する変更ファイルのパス。
      - `rules`: そのファイルに適用されるルールファイルのパス一覧（適用される CLAUDE.md と `.claude/rules/` を区別なく列挙。親ディレクトリのCLAUDE.md・`paths` がそのファイルに一致する `.claude/rules/`・`paths` 未指定の全適用ルールがすべて含まれ、一致しないルールは含まれない）。スコープ判定はスクリプトが済ませているため、エージェントは `rules` をそのまま参照すればよい。
    - `assignments` は `excludedFiles` を除いた `changedFiles` のみを対象に組まれている（エージェント1・2は自動的に除外ファイルをスキップする）。適用ルールセットが同一のファイルが同一エージェントに寄せられ、かつ各エージェントが担当ファイルに不要なルールを読まずに済むよう、スクリプトが決定論的に振り分け済み。

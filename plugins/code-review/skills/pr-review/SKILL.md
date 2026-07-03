@@ -20,10 +20,10 @@ disable-model-invocation: true
    - 一致する場合のみ、以降のステップに進む。
 
 1. `node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-review-context.mjs --pr <PR>` を実行して、PR変更ファイルへのレビュー準備情報（レビュー対象フィルタ結果 + プロジェクトルール適用結果）を取得する。なお、ルール（CLAUDE.md と `.claude/rules/`）および `.gitattributes`（後述の除外判定に使う）はローカル作業ツリーから読み込むため、ステップ0の一致確認が前提となる。**スクリプトは結果を一時ファイルに書き出し、そのパスのみを標準出力に1行で返す。** このパスを変数に束ねて以降のステップで使い回し、必要な値は `jq` で取り出すこと（例: `CTX=$(node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-review-context.mjs --pr <PR>)`）。JSON の形式は以下:
-   - `changedFiles`: レビュー対象の変更ファイル一覧（下記フィルタで除外されたものは含まれない）。
-   - `excludedFiles`: レビュー対象から**機械的に除外**した変更ファイル一覧（生成物・ミニファイ・バイナリ、または `.gitattributes` の `linguist-generated=true`）。**具体的な除外条件はスクリプトが確定済みで、この配列が唯一の正**。SKILL 側で条件を再判定・列挙しないこと。
+   - `changedFiles`: レビュー対象の変更ファイルパスの**文字列配列**（オブジェクトではない。例: `["a/b.ts", "c/d.rb"]`。下記フィルタで除外されたものは含まれない）。取り出すときは `.path` を付けず `jq -r '.changedFiles[]' "$CTX"` とすること。
+   - `excludedFiles`: レビュー対象から**機械的に除外**した変更ファイル一覧。`changedFiles` と同型の**文字列配列**（生成物・ミニファイ・バイナリ、または `.gitattributes` の `linguist-generated=true`）。**具体的な除外条件はスクリプトが確定済みで、この配列が唯一の正**。SKILL 側で条件を再判定・列挙しないこと。
    - `excludeArgs`: 除外ファイルを diff から落とすための、コマンド別の**組み立て済み引数**。`excludeArgs.gh` は `gh pr diff` 用（`--exclude <path>` の繰り返し）。除外ファイルが無ければ空配列。以降 `gh pr diff <PR>` を叩くときは必ずこの引数を連結する（下記）。
-   - `assignments`: エージェント1・2への担当割り当て（2要素の配列。`assignments[0]` がエージェント1用、`assignments[1]` がエージェント2用）。各要素は `files` を持ち、`files` は `{ path, rules }` の配列。
+   - `assignments`: エージェント1・2への担当割り当て（2要素の配列。`assignments[0]` がエージェント1用、`assignments[1]` がエージェント2用）。**`changedFiles`/`excludedFiles`（文字列配列）とは異なり**、各要素は `files` を持ち、`files` は `{ path, rules }` の**オブジェクト配列**。
      - `path`: 担当する変更ファイルのパス。
      - `rules`: そのファイルに適用されるルールファイルのパス一覧（適用される CLAUDE.md と `.claude/rules/` を区別なく列挙。親ディレクトリのCLAUDE.md・`paths` がそのファイルに一致する `.claude/rules/`・`paths` 未指定の全適用ルールがすべて含まれ、一致しないルールは含まれない）。スコープ判定はスクリプトが済ませているため、エージェントは `rules` をそのまま参照すればよい。
    - `assignments` は `excludedFiles` を除いた `changedFiles` のみを対象に組まれている（エージェント1・2は自動的に除外ファイルをスキップする）。適用ルールセットが同一のファイルが同一エージェントに寄せられ、かつ各エージェントが担当ファイルに不要なルールを読まずに済むよう、スクリプトが決定論的に振り分け済み。
