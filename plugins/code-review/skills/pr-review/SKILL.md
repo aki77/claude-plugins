@@ -1,7 +1,7 @@
 ---
 name: pr-review
 description: 指定されたGitHubプルリクエストに対して、複数の専門エージェント（CLAUDE.md準拠/バグ検出/REVIEW.md準拠）を並列起動して多角的なコードレビューを実施するスキル。
-allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh repo view:*), Bash(gh api:*), Bash(git rev-parse:*), Bash(git diff:*), Bash(node:*), Bash(jq:*)
+allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh repo view:*), Bash(gh api:*), Bash(git rev-parse:*), Bash(git diff:*), Bash(git show:*), Bash(node:*), Bash(jq:*)
 disable-model-invocation: true
 ---
 

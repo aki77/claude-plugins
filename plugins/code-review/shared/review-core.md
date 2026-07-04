@@ -18,16 +18,17 @@ CTX（ステップ1） → CLUSTERS（ステップ2b） → FINDINGS（ステッ
 - ツールはタスク完了に必要な場合のみ呼び出す。すべてのツール呼び出しには明確な目的が必要。
 - **レビュー中に作業ツリーを変更しないこと**（ファイル編集・stage・チェックアウト・stash 等を一切行わない）。全スクリプトは CTX から同一の diff を再生成して行番号を確定するため、途中で作業ツリーが変わると params が実ファイルとずれる。
 
-**メインエージェントが打ってよい Bash コマンドの制約（headless 実行での permission 拒否ループを防ぐ）:** このパイプラインが使う Bash コマンドは `node`（各スクリプト）・`jq`（中間成果物の読み取り）・`git`（`rev-parse` / `diff` / `log`）・`gh`（PR 情報取得）のみである。headless（非対話）実行では、これらの許可リスト外のコマンドや作業ツリー外へのファイル書き込みは**即座に拒否**され、回避策を試すたびに別の拒否に当たって試行錯誤ループに陥る（ターン数とコストを浪費し、レビュー不成立の一因になる）。以下を厳守すること:
+**Bash コマンドの制約（headless 実行での permission 拒否ループを防ぐ。メインエージェントおよび全サブエージェント＝エージェント1〜5・検証エージェントに適用）:** headless（claude-code-action 等の非対話）実行では、Claude Code の **Bash permission 静的解析**が許可リストに一致しないコマンドを**対話プロンプトを出せず即拒否**する。特に **`$(...)` コマンド置換・パイプ `|`・`;`/`&&` での複合・リダイレクト `>` / `>>`（`/tmp` を含む作業ツリー外は常に拒否）・許可リスト外コマンド（`awk`/`sed`/`tee`/`for`/`xargs`/`python3` 等）は解析不能または非一致として拒否**される。拒否のたびに別の書き方を試すと試行錯誤ループに陥り、ターン数とコストを浪費してレビュー不成立の一因になる。以下を厳守すること（これらは「1コマンド1目的の単純コマンド」に統一するための規則である）:
 
-- **中間成果物（CTX / CLUSTERS / FINDINGS / ISSUES / FINAL）の読み取りは `jq` のみで行う。** スクリプトが返すパスは `jq -c '...' "$CTX"` 等でそのまま読める設計であり、追加の整形は一切不要。
-- **`python3` / `python` や `cat ... | ...` などの複合パイプによる JSON 整形を行わない。** これらは許可リスト外・複合コマンド判定で headless では即拒否になる。JSON の値取り出しは常に `jq` で足りる。
-- **独自の中間ファイル書き出し（`>` / `>>` リダイレクト・`mkdir`・`tee` 等）を行わない。** 中間ファイルはスクリプトが `tmpdir()` に書くため、メインエージェントが追加でファイルを作る必要は無い。headless の sandbox では作業ツリー外（`/tmp` を含む）への `>` / `mkdir` が弾かれる。
-- diff や JSON を「変数に束ねる」箇所（`CTX=$(...)` 等）は**コマンド置換**で行い、ファイルに書き出さない。
+- **やってよい（headless でも通る）:** 単一の許可コマンドを1つだけ実行し、その**標準出力をツール結果としてそのまま読む**。具体的には `node <script> --flag "$VAR"`、`jq '...' "$VAR"`（または `jq '...' /リテラルパス`）、`git diff ...`、`git show <ref>:<path>`、`gh ...`。**`$VAR` の変数展開（`"$CTX"` 等）は許可される**ので中間成果物パスの参照に使ってよい。diff の取得は下記「diff 取得の統一則」の `emit-diff.mjs`（単一コマンドで diff を stdout に出す）を使い、**巨大な diff でも分割せずその出力をそのまま読む**（`awk`/`sed`/リダイレクトでの行範囲分割をしない）。
+- **やってはいけない（headless で拒否される）:** `$(...)` コマンド置換（`CTX=$(node ...)` や `git diff $(jq ...)` 等）、パイプ `|`、`;` / `&&` での複合コマンド、リダイレクト `>` / `>>`（独自の中間ファイル書き出し。中間ファイルはスクリプトが `tmpdir()` に書くため不要）、`awk` / `sed` / `tee` / `for` / `xargs` / `python3` などによる diff / JSON の整形。
+- **中間成果物（CTX / CLUSTERS / FINDINGS / ISSUES / FINAL）の値取り出しは `jq` のみで行う。** スクリプトが返すパスは `jq -c '...' "$CTX"` 等でそのまま読める設計であり、追加の整形は一切不要。
+- **スクリプトが返すパスの受け渡しは「リテラル代入」で行う（`$(...)` で束ねない）。** スクリプトはパスを stdout に1行印字するので、その出力を読み取り、次に `CTX=/実際に印字されたパス`（**右辺はリテラル文字列。コマンド置換 `$(...)` を使わない**）と代入してから、以降は `"$CTX"` で参照する。この代入と `$VAR` 展開は headless でも通る。転記は各成果物につき1回だけでよい。
+- diff の取得先が claude-code-action の場合、`--allowedTools` には最低限 `Bash(node:*),Bash(jq:*),Bash(git diff:*),Bash(git show:*),Bash(git rev-parse:*),Bash(gh:*)` を許可すること。加えて `Read,Grep,Glob` も許可すると、エージェント4・5 の diff 外ファイル参照が単一コマンドより効率化する（許可リストは利用側リポジトリのワークフロー管轄で、このパイプラインからは変更できない）。
 
 以下の手順を厳密に実行してください:
 
-1. `node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-review-context.mjs <context引数>` を実行して、変更ファイルへのレビュー準備情報（レビュー対象フィルタ結果 + プロジェクトルール適用結果）を取得する（**context引数** はモード別パラメータ表を参照）。ルール（CLAUDE.md と `.claude/rules/`）および `.gitattributes`（後述の除外判定に使う）はローカル作業ツリーから読み込む。**スクリプトは結果を一時ファイルに書き出し、そのパスのみを標準出力に1行で返す。** このパスを変数に束ねて以降のステップで使い回し、必要な値は `jq` で取り出すこと（例: `CTX=$(node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-review-context.mjs <context引数>)`）。JSON の形式は以下:
+1. `node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-review-context.mjs <context引数>` を実行して、変更ファイルへのレビュー準備情報（レビュー対象フィルタ結果 + プロジェクトルール適用結果）を取得する（**context引数** はモード別パラメータ表を参照）。ルール（CLAUDE.md と `.claude/rules/`）および `.gitattributes`（後述の除外判定に使う）はローカル作業ツリーから読み込む。**スクリプトは結果を一時ファイルに書き出し、そのパスのみを標準出力に1行で返す。** この印字されたパスを読み取り、次のコマンドで `CTX=/印字されたパス`（**リテラル代入。`$(...)` で束ねない**。前掲「Bash コマンドの制約」参照）として束ね、以降のステップで `"$CTX"` として使い回す。必要な値は `jq` で取り出すこと（例: パスが `/tmp/code-review-context-123.json` なら `CTX=/tmp/code-review-context-123.json`）。JSON の形式は以下:
    - `source`: レビュー対象の種別。`"pr"`（PR の base...HEAD 差分）/ `"range"`（git range のコミット差分）/ `"staged"`（ステージ済み変更）。
    - `diffArgs`: 後続ステップで `git diff` に渡す引数の配列（全モード共通で存在）。PR / range モードでは `[<range>]`、staged モードでは `["--staged"]`。
    - `range`: 解決済みの git range（例: `abc123...HEAD`）。`source` が `"pr"` または `"range"` のときのみ存在する（staged モードでは存在しない）。
@@ -39,11 +40,11 @@ CTX（ステップ1） → CLUSTERS（ステップ2b） → FINDINGS（ステッ
      - `rules`: そのファイルに適用されるルールファイルのパス一覧（適用される CLAUDE.md と `.claude/rules/` を区別なく列挙。親ディレクトリのCLAUDE.md・`paths` がそのファイルに一致する `.claude/rules/`・`paths` 未指定の全適用ルールがすべて含まれ、一致しないルールは含まれない）。スコープ判定はスクリプトが済ませているため、エージェントは `rules` をそのまま参照すればよい。
    - `assignments` は `excludedFiles` を除いた `changedFiles` のみを対象に組まれている（エージェント1・2は自動的に除外ファイルをスキップする）。適用ルールセットが同一のファイルが同一エージェントに寄せられ、かつ各エージェントが担当ファイルに不要なルールを読まずに済むよう、スクリプトが決定論的に振り分け済み。
 
-   **diff 取得の統一則: 以降 diff を取得するすべての箇所では、`git diff $(jq -r '.diffArgs[]' "$CTX") $(jq -r '.excludeArgs.git[]' "$CTX")` を実行すること**（`diffArgs` が range / `--staged` を、`excludeArgs.git` がレビュー対象外ファイルの除外を担う。除外ファイルが無ければ後者は空になり従来と同じ）。これによりエージェント3・4・5 やサマリエージェントが読む diff からも生成物・バイナリが除かれる。全モードでこの1コマンドに統一されているため、モードによる diff コマンドの分岐は不要。**スクリプト（process-findings.mjs 等）は CTX から同一の diff を内部で再生成する**ため、行番号解決は必ずレビューに使ったのと同じ diff に対して行われる。
+   **diff 取得の統一則: 以降 diff を取得するすべての箇所では、`node ${CLAUDE_PLUGIN_ROOT}/scripts/emit-diff.mjs --context "$CTX"` を実行すること**（この単一コマンドが CTX の `diffArgs`（range / `--staged`）と `excludeArgs`（レビュー対象外ファイルの除外）を内部で組み立て、除外適用済みの diff を標準出力に直出しする。`$(...)` を含まないため headless でも通る）。これによりエージェント3・5 やサマリエージェントが読む diff からも生成物・バイナリが除かれる。全モードでこの1コマンドに統一されているため、モードによる diff コマンドの分岐は不要。**エージェント4（クラスタ担当）だけは担当クラスタに絞った diff を使う**（下記ステップ3のエージェント4を参照）。**スクリプト（process-findings.mjs 等）は CTX から同一の diff を内部で再生成する**ため、行番号解決は必ずレビューに使ったのと同じ diff に対して行われる。
 
 2. **サマリ + 影響クラスタ分割エージェントを起動する。** Task/Agent ツールでサブエージェントを起動し、以下の情報から (a) 変更内容のサマリ（`summary`。変更の意図・全体像・主要な変更点）と (b) **影響クラスタ分割案**（`clusters`。fenced JSON で返させる）の2つを返させる。ステップ1と並列で実行してよい（ステップ1の結果に依存しない）。
    - **サマリエージェント入力**（モード別パラメータ表を参照）: 変更の意図・WHY を把握するための情報（PRタイトル・説明文・コミットメッセージ、または git log）。
-   - `git diff $(jq -r '.diffArgs[]' "$CTX") $(jq -r '.excludeArgs.git[]' "$CTX")`: 差分テキスト（変更の具体的な内容を把握するため。レビュー対象外ファイルを除外した diff）。
+   - `node ${CLAUDE_PLUGIN_ROOT}/scripts/emit-diff.mjs --context "$CTX"`: 差分テキスト（変更の具体的な内容を把握するため。レビュー対象外ファイルを除外した diff。diff 取得の統一則を参照）。
 
    **返却物1: `summary`** — 変更サマリ（テキスト）。
 
@@ -64,9 +65,9 @@ CTX（ステップ1） → CLUSTERS（ステップ2b） → FINDINGS（ステッ
    1. **`clusters`**: ステップ2b でスクリプト検証し、ステップ3のエージェント4を各クラスタにつき1インスタンス並列起動するための入力。
    2. **`summary`**: モード別パラメータの**著者意図情報**として消費される（local-review では `summary` が唯一の著者意図情報でエージェント3・4・5に渡す必須入力。pr-review ではエージェント4の著者意図として `summary` を渡してよい）。
 
-   **2b. クラスタ分割をスクリプトで検証・修復する。** ステップ2エージェントの `clusters`（fenced JSON）を取り出し、`node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-clusters.mjs --context "$CTX"` に **stdin で JSON 配列を渡す**。スクリプトは diff 外パスの除去・未カバーファイルの追加・空クラスタ削除・id 振り直し・`symbols`/`contextHints` の `[]` 補完を機械的に行い、破綻時（パース不能／非配列／3超過／`theme`・`changedFiles` 欠落要素あり／修復後0件）は**単一クラスタ（全変更ファイル）へ決定論的に縮退**する。結果を変数に束ねる（例: `CLUSTERS=$(... validate-clusters.mjs --context "$CTX")`）。エージェント4はこの検証済み `clusters`（`jq -c '.clusters[]' "$CLUSTERS"` で1件ずつ取り出す）を入力に使う。**サマリ + クラスタ分割エージェント（ステップ2）が失敗した場合も、`[]` を stdin にしてこのスクリプトを通す**（縮退経路をここに一本化する。SKILL 側で単一クラスタを手組みしない。1回再起動するかどうかの判断は後述「並列サブエージェントの起動・完了回収」の規則に従う）。
+   **2b. クラスタ分割をスクリプトで検証・修復する。** ステップ2エージェントの `clusters`（fenced JSON）を取り出し、`node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-clusters.mjs --context "$CTX"` に **stdin で JSON 配列を渡す**。スクリプトは diff 外パスの除去・未カバーファイルの追加・空クラスタ削除・id 振り直し・`symbols`/`contextHints` の `[]` 補完を機械的に行い、破綻時（パース不能／非配列／3超過／`theme`・`changedFiles` 欠落要素あり／修復後0件）は**単一クラスタ（全変更ファイル）へ決定論的に縮退**する。印字されたパスを `CLUSTERS=/印字されたパス`（リテラル代入。`$(...)` で束ねない）として束ねる。エージェント4はこの検証済み `clusters`（`jq -c '.clusters[]' "$CLUSTERS"` で1件ずつ取り出す）を入力に使う。**サマリ + クラスタ分割エージェント（ステップ2）が失敗した場合も、`[]` を stdin にしてこのスクリプトを通す**（縮退経路をここに一本化する。SKILL 側で単一クラスタを手組みしない。1回再起動するかどうかの判断は後述「並列サブエージェントの起動・完了回収」の規則に従う）。
 
-3. レビューエージェントを並列で起動し、変更内容を独立してレビューする。**各エージェントの出力は finding 配列の fenced JSON のみとする**（下記「構造化出力」を厳守。課題0件なら `[]`）。diff を取得するエージェント（3・4・5）には `git diff $(jq -r '.diffArgs[]' "$CTX") $(jq -r '.excludeArgs.git[]' "$CTX")`（レビュー対象外ファイルを除外した diff）を使わせること。各エージェントの起動タイミングは **ステップ3の起動タイミング**（モード別パラメータ表）に従う。**エージェント4はステップ2b の検証済み `clusters` を入力に使うため、ステップ2b の完了後にクラスタ数だけ並列起動する。** 各エージェントの役割は以下の通り:
+3. レビューエージェントを並列で起動し、変更内容を独立してレビューする。**各エージェントの出力は finding 配列の fenced JSON のみとする**（下記「構造化出力」を厳守。課題0件なら `[]`）。diff を取得するエージェントには次の diff を使わせること: **エージェント3・5 には全体 diff `node ${CLAUDE_PLUGIN_ROOT}/scripts/emit-diff.mjs --context "$CTX"`**（レビュー対象外ファイルを除外した全変更の diff）。**エージェント4には担当クラスタに絞った diff `node ${CLAUDE_PLUGIN_ROOT}/scripts/emit-diff.mjs --context "$CTX" --clusters "$CLUSTERS" --cluster-id <担当クラスタの id>`**（そのクラスタの `changedFiles` だけの diff。担当外は含まれない）。各エージェントの起動タイミングは **ステップ3の起動タイミング**（モード別パラメータ表）に従う。**エージェント4はステップ2b の検証済み `clusters` を入力に使うため、ステップ2b の完了後にクラスタ数だけ並列起動する。** 各エージェントの役割は以下の通り:
 
    エージェント1, 2: プロジェクトルール準拠チェック（Sonnet）
    エージェント1はステップ1の `assignments[0].files`、エージェント2は `assignments[1].files` を担当し、並列でプロジェクトルール（CLAUDE.md および `.claude/rules/` 配下のルールファイル）への準拠を監査する。担当ファイルの振り分けはステップ1のスクリプトが決定済みのため、エージェント側で再分配しないこと。`assignments[1].files` が空の場合（全ファイルが1エージェントに収まる場合）はエージェント2を起動しないこと。各ファイルに適用すべきルールは `files[i].rules` に列挙済み（スコープ判定はスクリプトが完了している）。**あるファイルのレビューでは、そのファイルの `rules` に列挙されたルールファイルのみを適用すること。`rules` に含まれないルールでそのファイルを指摘しないこと。**
@@ -84,6 +85,8 @@ CTX（ステップ1） → CLUSTERS（ステップ2b） → FINDINGS（ステッ
 
    `contextHints` は整合性確認の**起点であって上限ではない**。上記の確認に必要なら、`contextHints` に無いファイルも追加で読んでよい（意味的なクラスタ分割は網羅的ではないため、LLM 側の探索で補う）。
 
+   **diff 外ファイルの参照手段（headless で拒否されない方法。前掲「Bash コマンドの制約」に従う）:** Read / Grep / Glob ツールが使えるならそれを最優先で使う。使えない環境（許可リストに無い等）では、**単一の許可コマンド**で読む——現行の作業ツリーの内容は `git show HEAD:<path>`、PR の特定リビジョンの内容は `git show <ref>:<path>`（例: 旧版の設定ファイルなら `git show <baseの sha>:.rubocop.yml`）。**`git show ... | grep`・`for`・`sed -n`・`awk`・`xargs` などの複合は使わない**（headless で拒否される）。内容の絞り込みはコマンドで行わず、ファイル全体を単一コマンドで読んでエージェント自身が判断すること。
+
    ただし以下は守ること:
    - 確信が持てない指摘は行わない（誤検知はレビュアーの信頼を損なう）
    - diff外のコードに既に存在していた問題（**既存問題の基準**（モード別パラメータ表）より前から存在する問題）は指摘しない
@@ -92,7 +95,7 @@ CTX（ステップ1） → CLUSTERS（ステップ2b） → FINDINGS（ステッ
    - 自クラスタの `changedFiles` に導入された問題のみを指摘する（他クラスタの変更は担当外。重複はステップ4でスクリプトが機械統合する）
 
    エージェント5: REVIEW.md準拠チェック（Sonnet、エージェント1〜4と並列）
-   ルート直下の `REVIEW.md` に記載されたレビュー観点への新規違反を監査する。観点ファイルのロードは以下のルールに従うこと:
+   ルート直下の `REVIEW.md` に記載されたレビュー観点への新規違反を監査する。**REVIEW.md や観点ファイルの読み込みは、Read / Grep / Glob ツールが使えるならそれを使い、使えない環境では単一の `git show HEAD:<path>` で読む**（前掲「Bash コマンドの制約」に従い、パイプ・複合は使わない）。観点ファイルのロードは以下のルールに従うこと:
 
    - 「常時適用される観点」セクションで `@` インポートされている観点ファイルは必ず読み込む。
    - 「条件付き観点」セクションは、まずインデックス（観点名・観点ファイルのパス・適用対象の説明）のみを読む。各観点について、変更内容（変更ファイルのパスとdiff）が「適用対象」に該当するかを判断する。**該当する観点のみ**、観点ファイル本体を読み込んでレビューに使用する。該当しない観点の本体ファイルは読み込まないこと。
@@ -144,7 +147,7 @@ CTX（ステップ1） → CLUSTERS（ステップ2b） → FINDINGS（ステッ
 
    このあと集約・重複統合・行番号解決はステップ4のスクリプトが機械的に行うため、**エージェントは行番号・重複・統合を一切気にせず、発見した課題を上記スキーマで並べるだけでよい**。
 
-4. **ステップ3の全エージェント出力を集約し、`process-findings.mjs` で機械処理する。** 各レビューエージェントが返した finding 配列の fenced JSON を、**そのまま並べた配列（＝配列の配列でよい。スクリプトが自動フラット化する）**を `node ${CLAUDE_PLUGIN_ROOT}/scripts/process-findings.mjs --context "$CTX"` に **stdin で JSON を渡す**（`existingCode` の改行は `\n` として JSON エスケープすること）。結果を変数に束ねる（例: `FINDINGS=$(... process-findings.mjs --context "$CTX")`）。スクリプトは以下を機械的に行う:
+4. **ステップ3の全エージェント出力を集約し、`process-findings.mjs` で機械処理する。** 各レビューエージェントが返した finding 配列の fenced JSON を、**そのまま並べた配列（＝配列の配列でよい。スクリプトが自動フラット化する）**を `node ${CLAUDE_PLUGIN_ROOT}/scripts/process-findings.mjs --context "$CTX"` に **stdin で JSON を渡す**（`existingCode` の改行は `\n` として JSON エスケープすること）。印字されたパスを `FINDINGS=/印字されたパス`（リテラル代入。`$(...)` で束ねない）として束ねる。スクリプトは以下を機械的に行う:
    - ID 付与（入力順 `f1..fN`）
    - スキーマ検証（違反は finding 単位で `status:"invalid"`。全体は落とさない）
    - **スコープ機械チェック**（`path ∉ changedFiles` または `∈ excludedFiles` → `status:"out-of-scope"`。対象外ファイルの指摘をプロンプト頼みでなく機械的に弾く）
@@ -154,13 +157,13 @@ CTX（ステップ1） → CLUSTERS（ステップ2b） → FINDINGS（ステッ
 
    出力 `FINDINGS` は `{ findings[], groups[], stats }` を持つ。`stats.unresolved`（アンカーが diff に一意一致しなかった件数）を `jq -r '.stats.unresolved' "$FINDINGS"` で確認する。
 
-   **4b. 未解決アンカーの再解決（1回だけ）:** `stats.unresolved > 0` の場合、**メインエージェントが**未解決 finding（`jq -c '.findings[] | select(.status=="active" and .resolved==false)' "$FINDINGS"`）の `path` / `existingCode` / `reason` を確認し、対応する diff（統一 diff）を読んで `existingCode` を diff に逐語一致するよう修正する（サブエージェントへの委託は行わない）。修正パッチ `[{ "id": "f3", "existingCode": "修正後アンカー" }]`（未解決分のみ）を `node ${CLAUDE_PLUGIN_ROOT}/scripts/process-findings.mjs --context "$CTX" --retry "$FINDINGS"` に **stdin で渡し**、結果で `FINDINGS` を更新する（例: `FINDINGS=$(... --retry "$FINDINGS")`）。**このアンカー再解決の再試行は1回だけ**行う（後述「並列サブエージェントの起動・完了回収」の「1回だけ再起動」とは別の独立したカウンタ。こちらはメインエージェント自身によるテキスト修正のリトライであり、サブエージェントの再起動ではない）。未解決分すべてを対象に1回のパッチで再解決を試みてよい（1件ずつ複数回に分けない）。なお再解決してもなお未解決の finding は `resolved:false` のまま**携行する**（除外しない。後段でサマリに退避される）。行番号の再推測は絶対にしない（アンカーの修正のみ）。**diff の確認は `git diff $(jq -r '.diffArgs[]' "$CTX") $(jq -r '.excludeArgs.git[]' "$CTX")` の出力を直接読むだけとし、`/tmp` 等へ書き出して `python3` などで加工しないこと**（前掲「メインエージェントが打ってよい Bash コマンドの制約」に従う）。
+   **4b. 未解決アンカーの再解決（1回だけ）:** `stats.unresolved > 0` の場合、**メインエージェントが**未解決 finding（`jq -c '.findings[] | select(.status=="active" and .resolved==false)' "$FINDINGS"`）の `path` / `existingCode` / `reason` を確認し、対応する diff（統一 diff）を読んで `existingCode` を diff に逐語一致するよう修正する（サブエージェントへの委託は行わない）。修正パッチ `[{ "id": "f3", "existingCode": "修正後アンカー" }]`（未解決分のみ）を `node ${CLAUDE_PLUGIN_ROOT}/scripts/process-findings.mjs --context "$CTX" --retry "$FINDINGS"` に **stdin で渡し**、印字された新しいパスを `FINDINGS=/印字されたパス`（リテラル代入。`$(...)` で束ねない）として更新する。**このアンカー再解決の再試行は1回だけ**行う（後述「並列サブエージェントの起動・完了回収」の「1回だけ再起動」とは別の独立したカウンタ。こちらはメインエージェント自身によるテキスト修正のリトライであり、サブエージェントの再起動ではない）。未解決分すべてを対象に1回のパッチで再解決を試みてよい（1件ずつ複数回に分けない）。なお再解決してもなお未解決の finding は `resolved:false` のまま**携行する**（除外しない。後段でサマリに退避される）。行番号の再推測は絶対にしない（アンカーの修正のみ）。**diff の確認は `node ${CLAUDE_PLUGIN_ROOT}/scripts/emit-diff.mjs --context "$CTX"` の出力を直接読むだけとし、独自の中間ファイル書き出しや `python3` などでの加工をしないこと**（前掲「Bash コマンドの制約」に従う）。
 
 5. **メンバー2件以上のグループの統合文章を作成する。** `FINDINGS` の `needsMergeText:true` の各グループ（`jq -c '.groups[] | select(.needsMergeText==true)' "$FINDINGS"` で取得。各グループの `memberIds` から `jq` で該当 finding の `title`/`body` を引く）について、メインエージェントが統合後の `title`（1行要約）と `body`（統合説明）を作成する。指針:
    - 同一箇所の重複指摘を1件にまとめる。**趣旨の異なる指摘が同一箇所に集まっている場合は、箇条書きで両方の趣旨を残す**（片方を捨てない）。
    - 引用元リンク（ルール系のグループなら該当ルールファイルへのリンク）を残す。
 
-   **5b. 統合文章とグループ構造を機械結合して ISSUES を生成する。** 作成した統合文章の配列 `[{ "groupId": "g1", "title": "...", "body": "..." }]`（`needsMergeText:true` の**全グループ分のみ**）を `node ${CLAUDE_PLUGIN_ROOT}/scripts/merge-findings.mjs --findings "$FINDINGS"` に **stdin で渡す**。結果を変数に束ねる（例: `ISSUES=$(... merge-findings.mjs --findings "$FINDINGS")`）。スクリプトは singleton グループ（メンバー1件）の title/body を自動コピーし、`path`/`kind`/`params`/`resolved`/`existingCode`/`ruleRefs`（和集合）を機械転写して `{ issues[], stats }` を生成する。欠落・未知・重複 groupId、singleton への文章供給はエラーになる（その場合は入力を見直して再実行する）。
+   **5b. 統合文章とグループ構造を機械結合して ISSUES を生成する。** 作成した統合文章の配列 `[{ "groupId": "g1", "title": "...", "body": "..." }]`（`needsMergeText:true` の**全グループ分のみ**）を `node ${CLAUDE_PLUGIN_ROOT}/scripts/merge-findings.mjs --findings "$FINDINGS"` に **stdin で渡す**。印字されたパスを `ISSUES=/印字されたパス`（リテラル代入。`$(...)` で束ねない）として束ねる。スクリプトは singleton グループ（メンバー1件）の title/body を自動コピーし、`path`/`kind`/`params`/`resolved`/`existingCode`/`ruleRefs`（和集合）を機械転写して `{ issues[], stats }` を生成する。欠落・未知・重複 groupId、singleton への文章供給はエラーになる（その場合は入力を見直して再実行する）。
 
 6. **各 issue の検証エージェントを並列起動する。** `ISSUES` の各 issue（`jq -c '.issues[]' "$ISSUES"` で1件ずつ取り出す）について、検証用のサブエージェントを並列起動する。各サブエージェントには、**著者意図情報**（モード別パラメータ表）と、`jq` で取り出した issue（`id`/`path`/`kind`/`title`/`body`/`params` を含む。`params` の行番号で対象箇所を確実に特定できる）を渡す。サブエージェントの役割は、提示された課題が高い確度で実際の問題であるかを検証すること。例えば「変数が未定義」と指摘された場合、コード上で実際にそれが正しいかを確認する。プロジェクトルール違反（`kind:"rule"` かつルール系由来。CLAUDE.md および `.claude/rules/`）の場合、適用スコープはステップ1のスクリプトが確定済みのため、その範囲内で実際に違反しているかのみを検証する。REVIEW.md 違反の場合は、該当観点がそのファイルに適用される対象か、かつ実際に違反しているかを検証する。**検証には、`kind:"bug"` の issue には Opus サブエージェントを、`kind:"rule"` の issue には Sonnet サブエージェントを使用する**（バグ・ロジック系は Opus、ルール／REVIEW.md 系は Sonnet）。
 
@@ -173,7 +176,7 @@ CTX（ステップ1） → CLUSTERS（ステップ2b） → FINDINGS（ステッ
    - `verdict`: 実際の問題だと高い確度で確認できたら `"confirmed"`、そうでなければ `"rejected"`。
    - `reason`: 判定の根拠。
 
-7. **verdicts を束ねて機械適用し FINAL を生成する。** ステップ6の各検証サブエージェントが返した `{id, verdict, reason}` を配列に集め、`node ${CLAUDE_PLUGIN_ROOT}/scripts/apply-verdicts.mjs --issues "$ISSUES"` に **stdin で渡す**。結果を変数に束ねる（例: `FINAL=$(... apply-verdicts.mjs --issues "$ISSUES")`）。スクリプトは `confirmed` のみを最終課題として残し、`rejected` は理由付きで記録、**stdin に現れない issue は `unverified` として除外**する（検証サブエージェント失敗時の縮退もこの経路に一本化され、暗黙でなく成果物 `FINAL` に残る）。未知 id・重複 id・enum 外はエラーになる。`FINAL` は `{ issues:[confirmed の issue 全体], rejected[], unverified[], stats }` を持つ。
+7. **verdicts を束ねて機械適用し FINAL を生成する。** ステップ6の各検証サブエージェントが返した `{id, verdict, reason}` を配列に集め、`node ${CLAUDE_PLUGIN_ROOT}/scripts/apply-verdicts.mjs --issues "$ISSUES"` に **stdin で渡す**。印字されたパスを `FINAL=/印字されたパス`（リテラル代入。`$(...)` で束ねない）として束ねる。スクリプトは `confirmed` のみを最終課題として残し、`rejected` は理由付きで記録、**stdin に現れない issue は `unverified` として除外**する（検証サブエージェント失敗時の縮退もこの経路に一本化され、暗黙でなく成果物 `FINAL` に残る）。未知 id・重複 id・enum 外はエラーになる。`FINAL` は `{ issues:[confirmed の issue 全体], rejected[], unverified[], stats }` を持つ。
 
 8. **レビュー結果のサマリをターミナルに出力する（表示ソースは `FINAL` に固定）:**
    - 課題（`FINAL.issues` = confirmed）が見つかった場合は、それぞれの簡潔な説明を一覧表示する。`resolved:true` の issue は `path:line`（`params.line`）を添える（`jq -r '.issues[] | "\(.path):\(.params.line // "-")  \(.title)"' "$FINAL"`）。
