@@ -18,6 +18,13 @@ CTX（ステップ1） → CLUSTERS（ステップ2b） → FINDINGS（ステッ
 - ツールはタスク完了に必要な場合のみ呼び出す。すべてのツール呼び出しには明確な目的が必要。
 - **レビュー中に作業ツリーを変更しないこと**（ファイル編集・stage・チェックアウト・stash 等を一切行わない）。全スクリプトは CTX から同一の diff を再生成して行番号を確定するため、途中で作業ツリーが変わると params が実ファイルとずれる。
 
+**メインエージェントが打ってよい Bash コマンドの制約（headless 実行での permission 拒否ループを防ぐ）:** このパイプラインが使う Bash コマンドは `node`（各スクリプト）・`jq`（中間成果物の読み取り）・`git`（`rev-parse` / `diff` / `log`）・`gh`（PR 情報取得）のみである。headless（非対話）実行では、これらの許可リスト外のコマンドや作業ツリー外へのファイル書き込みは**即座に拒否**され、回避策を試すたびに別の拒否に当たって試行錯誤ループに陥る（ターン数とコストを浪費し、レビュー不成立の一因になる）。以下を厳守すること:
+
+- **中間成果物（CTX / CLUSTERS / FINDINGS / ISSUES / FINAL）の読み取りは `jq` のみで行う。** スクリプトが返すパスは `jq -c '...' "$CTX"` 等でそのまま読める設計であり、追加の整形は一切不要。
+- **`python3` / `python` や `cat ... | ...` などの複合パイプによる JSON 整形を行わない。** これらは許可リスト外・複合コマンド判定で headless では即拒否になる。JSON の値取り出しは常に `jq` で足りる。
+- **独自の中間ファイル書き出し（`>` / `>>` リダイレクト・`mkdir`・`tee` 等）を行わない。** 中間ファイルはスクリプトが `tmpdir()` に書くため、メインエージェントが追加でファイルを作る必要は無い。headless の sandbox では作業ツリー外（`/tmp` を含む）への `>` / `mkdir` が弾かれる。
+- diff や JSON を「変数に束ねる」箇所（`CTX=$(...)` 等）は**コマンド置換**で行い、ファイルに書き出さない。
+
 以下の手順を厳密に実行してください:
 
 1. `node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-review-context.mjs <context引数>` を実行して、変更ファイルへのレビュー準備情報（レビュー対象フィルタ結果 + プロジェクトルール適用結果）を取得する（**context引数** はモード別パラメータ表を参照）。ルール（CLAUDE.md と `.claude/rules/`）および `.gitattributes`（後述の除外判定に使う）はローカル作業ツリーから読み込む。**スクリプトは結果を一時ファイルに書き出し、そのパスのみを標準出力に1行で返す。** このパスを変数に束ねて以降のステップで使い回し、必要な値は `jq` で取り出すこと（例: `CTX=$(node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-review-context.mjs <context引数>)`）。JSON の形式は以下:
@@ -146,7 +153,7 @@ CTX（ステップ1） → CLUSTERS（ステップ2b） → FINDINGS（ステッ
 
    出力 `FINDINGS` は `{ findings[], groups[], stats }` を持つ。`stats.unresolved`（アンカーが diff に一意一致しなかった件数）を `jq -r '.stats.unresolved' "$FINDINGS"` で確認する。
 
-   **4b. 未解決アンカーの再解決（1回だけ）:** `stats.unresolved > 0` の場合、**メインエージェントが**未解決 finding（`jq -c '.findings[] | select(.status=="active" and .resolved==false)' "$FINDINGS"`）の `path` / `existingCode` / `reason` を確認し、対応する diff（統一 diff）を読んで `existingCode` を diff に逐語一致するよう修正する（サブエージェントへの委託は行わない）。修正パッチ `[{ "id": "f3", "existingCode": "修正後アンカー" }]`（未解決分のみ）を `node ${CLAUDE_PLUGIN_ROOT}/scripts/process-findings.mjs --context "$CTX" --retry "$FINDINGS"` に **stdin で渡し**、結果で `FINDINGS` を更新する（例: `FINDINGS=$(... --retry "$FINDINGS")`）。**このアンカー再解決の再試行は1回だけ**行う（後述「並列サブエージェントの起動・完了回収」の「1回だけ再起動」とは別の独立したカウンタ。こちらはメインエージェント自身によるテキスト修正のリトライであり、サブエージェントの再起動ではない）。未解決分すべてを対象に1回のパッチで再解決を試みてよい（1件ずつ複数回に分けない）。なお再解決してもなお未解決の finding は `resolved:false` のまま**携行する**（除外しない。後段でサマリに退避される）。行番号の再推測は絶対にしない（アンカーの修正のみ）。
+   **4b. 未解決アンカーの再解決（1回だけ）:** `stats.unresolved > 0` の場合、**メインエージェントが**未解決 finding（`jq -c '.findings[] | select(.status=="active" and .resolved==false)' "$FINDINGS"`）の `path` / `existingCode` / `reason` を確認し、対応する diff（統一 diff）を読んで `existingCode` を diff に逐語一致するよう修正する（サブエージェントへの委託は行わない）。修正パッチ `[{ "id": "f3", "existingCode": "修正後アンカー" }]`（未解決分のみ）を `node ${CLAUDE_PLUGIN_ROOT}/scripts/process-findings.mjs --context "$CTX" --retry "$FINDINGS"` に **stdin で渡し**、結果で `FINDINGS` を更新する（例: `FINDINGS=$(... --retry "$FINDINGS")`）。**このアンカー再解決の再試行は1回だけ**行う（後述「並列サブエージェントの起動・完了回収」の「1回だけ再起動」とは別の独立したカウンタ。こちらはメインエージェント自身によるテキスト修正のリトライであり、サブエージェントの再起動ではない）。未解決分すべてを対象に1回のパッチで再解決を試みてよい（1件ずつ複数回に分けない）。なお再解決してもなお未解決の finding は `resolved:false` のまま**携行する**（除外しない。後段でサマリに退避される）。行番号の再推測は絶対にしない（アンカーの修正のみ）。**diff の確認は `git diff $(jq -r '.diffArgs[]' "$CTX") $(jq -r '.excludeArgs.git[]' "$CTX")` の出力を直接読むだけとし、`/tmp` 等へ書き出して `python3` などで加工しないこと**（前掲「メインエージェントが打ってよい Bash コマンドの制約」に従う）。
 
 5. **メンバー2件以上のグループの統合文章を作成する。** `FINDINGS` の `needsMergeText:true` の各グループ（`jq -c '.groups[] | select(.needsMergeText==true)' "$FINDINGS"` で取得。各グループの `memberIds` から `jq` で該当 finding の `title`/`body` を引く）について、メインエージェントが統合後の `title`（1行要約）と `body`（統合説明）を作成する。指針:
    - 同一箇所の重複指摘を1件にまとめる。**趣旨の異なる指摘が同一箇所に集まっている場合は、箇条書きで両方の趣旨を残す**（片方を捨てない）。
