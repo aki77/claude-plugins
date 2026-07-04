@@ -27,45 +27,30 @@ disable-model-invocation: true
 | **ステップ3の起動タイミング** | エージェント1・2・3・5 はステップ2と並列に起動してよい（ステップ2に依存しない）。エージェント4のみステップ2完了を待つ |
 | **サマリ失敗時の縮退** | 著者意図情報（PRタイトル・説明文）は常に存在するため、`summary` が失敗してもエージェント4は PRタイトル・説明文を著者意図として起動できる |
 | **既存問題の基準** | 「PR以前から」 |
-| **ステップ7の追加要素と完了後の動作** | 追加要素なし（冒頭に「変更概要」は載せない）。`--comment` 指定時は下記ステップ8へ進む。未指定なら GitHub への投稿を一切行わずここで終了する |
+| **ステップ8の追加要素と完了後の動作** | 追加要素なし（冒頭に「変更概要」は載せない）。`--comment` 指定時は下記ステップ9へ進む。未指定なら GitHub への投稿を一切行わずここで終了する |
 
 ## 実行
 
-`${CLAUDE_PLUGIN_ROOT}/shared/review-core.md` を読み込み、上記モード別パラメータを適用してステップ1〜7を**一字一句そのとおりに実行する**。独自の追加・省略・解釈変更をしない。ルールファイル・`.gitattributes` はローカル作業ツリーから読むため、ステップ0の HEAD 一致確認が前提となっている。
+`${CLAUDE_PLUGIN_ROOT}/shared/review-core.md` を読み込み、上記モード別パラメータを適用してステップ1〜8を**一字一句そのとおりに実行する**。独自の追加・省略・解釈変更をしない。ルールファイル・`.gitattributes` はローカル作業ツリーから読むため、ステップ0の HEAD 一致確認が前提となっている。
 
-ステップ7まで完了したら、`--comment` が指定されている場合のみ以下のステップ8〜10へ進む（未指定ならステップ7で終了）。`--comment` 指定時は課題の有無にかかわらずステップ8に進む（課題ゼロの場合もPRレビューとして投稿する）。
+ステップ8まで完了したら、`--comment` が指定されている場合のみ以下のステップ9〜10へ進む（未指定ならステップ8で終了）。`--comment` 指定時は課題の有無にかかわらずステップ9に進む（課題ゼロの場合もPRレビューとして投稿する）。行番号（`line` / `startLine` / `side`）はステップ4のスクリプトが確定済みで `FINAL` の各 issue の `params` に入っている。**行番号を自分で推測・変更してはならない。**
 
-8. 投稿予定のコメント一覧を作成する。これは投稿内容を自分で確認するためのもので、どこにも投稿しないこと。各課題について以下を確定する:
-   - `path`: 対象ファイルの相対パス。
-   - `existingCode`: **diff 中にそのまま存在する連続した数行**（コメントを貼る位置のアンカーになる。行番号は書かない）。次を守ること:
-     - diff の該当箇所からコード片を**逐語コピー**する（インデント込み。書き換え・整形をしない）。
-     - suggestion で**行を削除する場合は、削除したい行と残したい行の両方をこの範囲に含める**（例: 31行目のコメントを消して32行目の `def` を残すなら、その2行を `existingCode` に含める）。
-     - アンカーは diff 内で**一意に特定できる**長さにする（同一行が複数箇所にある場合は前後行も含めて曖昧さを消す）。
-   - `suggestionBody`: suggestion ブロックの中身（= `existingCode` の範囲を丸ごと置き換える最終形）。**行を削除する修正では、範囲に削除行を含めつつ `suggestionBody` からその行を省く**（範囲2行→本文1行 = 実質削除）。
-   - `commentBody`: suggestion ブロックを除いたコメント文（課題の概要・引用元リンク）。
-
-9. 各課題の行番号を **スクリプトで確定する**。**行番号（`line` / `startLine`）を自分で推測して指定してはならない。** LLM が行番号を推測すると diff にマッピングできない指定（特に削除を伴う修正）になり、GitHub 側で位置解決に失敗して `line: null` 化する。**ステップ6で課題が0件だった場合はこのステップをスキップし、空配列 `[]` をステップ10の `comments` にそのまま渡す。** 手順:
-   - ステップ8の各課題から `{ path, existingCode }` の配列を作り、`node ${CLAUDE_PLUGIN_ROOT}/scripts/resolve-suggestion-lines.mjs --context "$CTX"` に **stdin で JSON を渡す**（`$CTX` はステップ1で束ねた CTX ファイルパス。`existingCode` の改行は `\n` としてJSONエスケープすること）。スクリプトは CTX の `diffArgs` / `excludeArgs.git` から `git -c core.quotepath=false diff ...` を実行し、レビューに使ったのと同一の統一 diff にアンカーをマッチさせる（別ソースの diff を引き直さないため、除外ファイル・非ASCIIパス等のずれが起きない）。
-   - スクリプトは各課題について diff hunk とテキストマッチして行番号を機械的に確定し、入力と同順の配列を返す:
-     - `{ path, resolved: true, params: { line, startLine?, side?, startSide?, subjectType } }`: 行番号確定に成功した課題。ステップ10でこの要素に `body` を足してそのまま投稿する（`params` は分解・再構成しない）。
-     - `{ path, resolved: false, reason }`: 該当箇所を diff から一意に特定できなかった課題。**インラインコメントにせず**、ステップ10のレビューサマリ本文に文章で記載する（誤った位置に貼らない）。`existingCode` が diff と逐語一致していない可能性が高いので、必要なら `existingCode` を diff に合わせて修正し再実行してもよい。
+9. **各インラインコメントの本文（`body`）を作成する。** `FINAL`（ステップ7で束ねた成果物パス）の **confirmed かつ `resolved:true` の各 issue**（`jq -c '.issues[] | select(.resolved==true)' "$FINAL"` で取得。`id`/`path`/`title`/`body`/`existingCode`/`params` を含む）について、GitHub に投稿するコメント本文を作る。`resolved:false` の confirmed issue はインライン化せず、ステップ10のサマリ本文で言及する（行番号が未確定なので誤位置に貼らない）。**課題が0件（`FINAL.issues` が空）の場合はこのステップの本文作成をスキップし、ステップ10で空の `comments: []` を渡す。** 各コメント本文の方針:
+   - 課題の概要を簡潔に記述する（issue の `title`/`body` を基にする。引用元リンクを含める）。
+   - 小規模で自己完結する修正の場合は、コミット可能な suggestion ブロック（```suggestion ... ```）を含める。suggestion の中身は `existingCode`（issue の `existingCode` を `jq` で参照）の範囲を丸ごと置き換える最終形にする。
+   - **行を削除する修正**では、`existingCode` の範囲が削除対象行を含んでいるので、suggestion 本文からその行を省けば削除になる。
+   - 大規模な修正（6行以上、構造的変更、複数箇所にまたがる変更）の場合は、suggestion ブロックを付けず、課題と修正方針を文章で記述する。
+   - 該当 suggestion をコミットするだけで課題が完全に解消する場合に限り、コミット可能な suggestion を投稿する。追加対応が必要な場合は suggestion ブロックを付けないこと。
+   - **アンカー範囲（`params` の行範囲）が意図した修正に合わない場合は、suggestion なしの文章コメントに落とす**（行番号の再推測・再解決はしない）。
 
 10. レビュー（サマリ + インラインコメント）を **`post-review.mjs` で一括投稿する**。GitHub REST API の `POST /pulls/{n}/reviews` を1リクエストで叩き、サマリと全インラインコメントをまとめて送信する。手順は以下:
 
-   1. 投稿内容 JSON を組み立てる。形式は `{ summaryBody, comments: [ ...ステップ9の各要素に body を足したもの ] }`:
-      - `comments`: **ステップ9の resolve 出力の配列に、対応する課題（同順・同 index）の `body` を付与しただけ**の配列。resolve 出力を組み替えたり `params` を分解・再構成したりしないこと（構造ミスを避けるため、resolve が返した要素をそのまま使い body を1つ足すだけにする）。
-        - `resolved: false` の要素も**そのまま含めてよい**（post-review.mjs 側でインライン投稿対象から自動スキップされる。該当課題はサマリ本文で言及する）。
-        - `path` と `params` はステップ9が返した値をそのまま保持する（`line` / `startLine` / `side` / `startSide` / `subjectType` を自分で決めない）。
-        - `body`: `resolved: true` の要素にのみ付与する。`commentBody` に、必要に応じて suggestion ブロック（```suggestion ... ```、中身は `suggestionBody`）を続けたもの。方針:
-          - 課題の概要を簡潔に記述する
-          - 小規模で自己完結する修正の場合は、コミット可能なsuggestionブロック（```suggestion ... ```）を含める
-          - 大規模な修正（6行以上、構造的変更、複数箇所にまたがる変更）の場合は、suggestionブロックは付けず、課題と修正方針を文章で記述する
-          - 該当suggestionをコミットするだけで課題が完全に解消する場合に限り、コミット可能なsuggestionを投稿する。追加対応が必要な場合はsuggestionブロックを付けないこと。
-          - **行を削除する修正**では、`suggestionBody` から削除対象行を省くこと（`existingCode` の範囲がその行を含んでいるので、本文から省けば削除になる）。
+   1. 投稿内容 JSON を組み立てる。形式は `{ summaryBody, comments: [{ id, body }] }`:
+      - `comments`: **ステップ9で本文を作った confirmed かつ `resolved:true` の各 issue につき `{ id, body }` を1つ**。`id` は `FINAL` の issue の `id`（= groupId）をそのまま使う。`body` はステップ9で作ったコメント本文（文章 + 必要に応じ suggestion ブロック）。**`params`・`path`・`line` などは一切書かない**（スクリプトが `id` で `FINAL` から引いて結合する）。`resolved:false` の issue は `comments` に含めない（含めるとスクリプトがエラーにする。サマリ本文で言及する）。
       - `summaryBody`: レビュー全体のサマリ（課題サマリのみで構成し、「変更概要」は載せない）:
-        - 課題が見つかった場合: 検出した課題の概要を記述する。ステップ9で `resolved: false` になりインライン化できなかった課題があれば、ここに該当ファイル・箇所と内容を文章で記載する。
+        - 課題が見つかった場合: 検出した課題の概要を記述する。confirmed だが `resolved:false`（インライン化できなかった）issue があれば、ここに該当ファイル・箇所と内容を文章で記載する。`FINAL.rejected` / `FINAL.unverified` はサマリに載せなくてよい（ターミナル表示済み）。
         - 課題が見つからなかった場合: 「問題は見つかりませんでした。バグ・プロジェクトルール（CLAUDE.md / .claude/rules/）準拠・REVIEW.md準拠を確認しました。」と記述する。
-   2. この JSON を `node ${CLAUDE_PLUGIN_ROOT}/scripts/post-review.mjs --pr <PR> --commit <headRefOid>` に **stdin で渡す**（`--commit` にはステップ0で取得済みの `headRefOid` を使い、レビュー対象コミットを固定する）。スクリプトは入力を検証（`resolved:false` を自動スキップ、`resolved:true` なのに `params.line`/`body` を欠く要素はエラーで即失敗）してから `params` を REST API のフィールドへ内部変換し、`event: "COMMENT"` でレビューを1リクエスト投稿して、投稿されたレビューの URL を返す。エラーで失敗した場合は入力構造を見直して再実行する。
+   2. この JSON を `node ${CLAUDE_PLUGIN_ROOT}/scripts/post-review.mjs --pr <PR> --commit <headRefOid> --issues "$FINAL"` に **stdin で渡す**（`--commit` にはステップ0で取得済みの `headRefOid` を使い、レビュー対象コミットを固定する。`--issues` にはステップ7で束ねた `FINAL` のパスを渡す）。スクリプトは入力を検証（未知/重複 id・`resolved:false` の id をコメントに含めた・`resolved:true` の confirmed issue がコメントに欠落＝黙殺・body 空はいずれもエラーで即失敗。resolved 済み issue が0件ならサマリのみ投稿を許容）してから `id` で `FINAL` の `params` を結合し、REST API のフィールドへ内部変換して `event: "COMMENT"` でレビューを1リクエスト投稿し、投稿されたレビューの URL を返す。エラーで失敗した場合は入力を見直して再実行する。
 
    **重要: 同一課題につき1コメントのみ投稿する。重複コメントを投稿しないこと。**
 

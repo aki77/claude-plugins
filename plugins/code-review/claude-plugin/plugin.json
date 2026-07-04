@@ -1,6 +1,6 @@
 {
   "name": "code-review",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "複数の専門エージェントを並列起動し、CLAUDE.md準拠・バグ検出・REVIEW.md準拠の観点からプルリクエストを多角的にレビューするプラグイン",
   "author": {
     "name": "aki77",
