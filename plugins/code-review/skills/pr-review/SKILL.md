@@ -44,7 +44,7 @@ disable-model-invocation: true
    - `suggestionBody`: suggestion ブロックの中身（= `existingCode` の範囲を丸ごと置き換える最終形）。**行を削除する修正では、範囲に削除行を含めつつ `suggestionBody` からその行を省く**（範囲2行→本文1行 = 実質削除）。
    - `commentBody`: suggestion ブロックを除いたコメント文（課題の概要・引用元リンク）。
 
-9. 各課題の行番号を **スクリプトで確定する**。**行番号（`line` / `startLine`）を自分で推測して指定してはならない。** LLM が行番号を推測すると diff にマッピングできない指定（特に削除を伴う修正）になり、GitHub 側で位置解決に失敗して `line: null` 化する。手順:
+9. 各課題の行番号を **スクリプトで確定する**。**行番号（`line` / `startLine`）を自分で推測して指定してはならない。** LLM が行番号を推測すると diff にマッピングできない指定（特に削除を伴う修正）になり、GitHub 側で位置解決に失敗して `line: null` 化する。**ステップ6で課題が0件だった場合はこのステップをスキップし、空配列 `[]` をステップ10の `comments` にそのまま渡す。** 手順:
    - ステップ8の各課題から `{ path, existingCode }` の配列を作り、`node ${CLAUDE_PLUGIN_ROOT}/scripts/resolve-suggestion-lines.mjs --context "$CTX"` に **stdin で JSON を渡す**（`$CTX` はステップ1で束ねた CTX ファイルパス。`existingCode` の改行は `\n` としてJSONエスケープすること）。スクリプトは CTX の `diffArgs` / `excludeArgs.git` から `git -c core.quotepath=false diff ...` を実行し、レビューに使ったのと同一の統一 diff にアンカーをマッチさせる（別ソースの diff を引き直さないため、除外ファイル・非ASCIIパス等のずれが起きない）。
    - スクリプトは各課題について diff hunk とテキストマッチして行番号を機械的に確定し、入力と同順の配列を返す:
      - `{ path, resolved: true, params: { line, startLine?, side?, startSide?, subjectType } }`: 行番号確定に成功した課題。ステップ10でこの要素に `body` を足してそのまま投稿する（`params` は分解・再構成しない）。
