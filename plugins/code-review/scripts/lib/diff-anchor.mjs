@@ -1,5 +1,4 @@
-#!/usr/bin/env node
-// suggestion の行番号をレビュー対象の diff から機械的に確定するスクリプト。
+// diff パース・アンカー（existingCode）解決の共通モジュール。
 //
 // 背景: LLM に行番号（line/startLine）を推測させると diff にマッピングできない指定
 // （例: 削除を含む修正を単一行で表現してしまう）が生まれ、GitHub 側で位置解決に失敗し
@@ -8,56 +7,25 @@
 // テキストマッチで確定する。マッチできなければ行番号を付けず resolved: false を返し、
 // 呼び出し側でインライン化せずサマリへ退避させる（誤位置に貼らない）。
 //
-// 入力:
-//   引数 --context <CTX> : collect-review-context.mjs が書き出した CTX ファイルのパス。
-//                          そこから diffArgs / excludeArgs.git を読み、diff は
-//                          `git -c core.quotepath=false diff <diffArgs> <excludeArgs.git>` で取得する。
-//                          呼び出し元 SKILL がレビューに使う統一 diff（review-core.md の統一則）と
-//                          完全に同一ソースになるため、アンカー（existingCode）との不整合が起きない。
-//                          quotepath=false 固定なので非ASCIIパスも生の UTF-8 で出力される。
-//   stdin (JSON)         : 課題の配列 [{ path, existingCode }]
-//                            path         : 対象ファイルの相対パス
-//                            existingCode : diff 中に実在する連続した数行（アンカー）
-// 出力(stdout, JSON): 入力と同順の配列
-//   解決成功: { path, resolved: true,  params: { line, startLine?, side?, startSide?, subjectType } }
-//   解決失敗: { path, resolved: false, reason }
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-
-// ---- 引数パース --------------------------------------------------------------
-function parseArgs(argv) {
-  const args = argv.slice(2);
-  if (args[0] === "--context" && args[1]) return { context: args[1] };
-  console.error(
-    "Usage: resolve-suggestion-lines.mjs --context <CTX>  (課題配列 JSON を stdin で渡す)"
-  );
-  process.exit(1);
-}
-
-// stdin（fd 0）を同期で最後まで読む。パイプ・リダイレクト双方で動く。
-function readStdin() {
-  try {
-    return readFileSync(0, "utf8");
-  } catch {
-    return "";
-  }
-}
+// このモジュールは複数スクリプト（process-findings.mjs 等）から import される純粋ロジック
+// で、FS/ネットワークには依存しない（diff テキストと課題オブジェクトを受け取るだけ）。
+import { fileURLToPath } from "node:url";
 
 // ---- diff hunk パース --------------------------------------------------------
 // unified diff の hunk ヘッダ。`@@ -oldStart,oldCount +newStart,newCount @@`
 // count は省略可（1 行 hunk のとき）。
-const hunkHeaderRe = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+export const hunkHeaderRe = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 // `diff --git a/<path> b/<path>` からファイルパスを取り出す。
 // diff は `git -c core.quotepath=false diff` で取得するため、非ASCIIパスもクォート＋
 // 8進エスケープされず生の UTF-8 で出力される（呼び出し元 SKILL の統一 diff と同一形式）。
-const fileHeaderRe = /^diff --git a\/(.+?) b\/(.+)$/;
+export const fileHeaderRe = /^diff --git a\/(.+?) b\/(.+)$/;
 
 // unified diff テキストを { path -> hunks[] } に分解する。
 // 各 hunk は行の配列を持ち、各行は { text, oldLine, newLine } を持つ。
 //   - context 行(' '): old/new 両方に行番号が付く
 //   - added 行  ('+'): new のみ
 //   - deleted 行('-'): old のみ
-function parseDiff(diffText) {
+export function parseDiff(diffText) {
   const files = new Map(); // path -> hunks[]
   let curPath = null;
   let curHunk = null;
@@ -106,13 +74,13 @@ function parseDiff(diffText) {
 // ---- 正規化 & マッチ ---------------------------------------------------------
 // 比較用に行を正規化する。前後空白を除去し、LLM が付けがちな先頭の diff マーカー
 // （'+' / '-' / 先頭スペース）を 1 つ剥がす。インデント差や貼り付け由来のマーカーを吸収。
-function normalizeLine(line) {
+export function normalizeLine(line) {
   let s = line;
   if (s.startsWith("+") || s.startsWith("-")) s = s.slice(1);
   return s.trim();
 }
 
-function splitAndNormalize(code) {
+export function splitAndNormalize(code) {
   return code
     .split("\n")
     .map(normalizeLine)
@@ -120,7 +88,7 @@ function splitAndNormalize(code) {
 }
 
 // hunk 群から、指定 side（"new" or "old"）の行だけを行番号付きで平坦化する。
-function sideLines(hunks, side) {
+export function sideLines(hunks, side) {
   const out = [];
   for (const hunk of hunks) {
     for (const l of hunk.lines) {
@@ -134,7 +102,7 @@ function sideLines(hunks, side) {
 // side 行列（{lineNo, norm}[]）に対し、needle（正規化済み文字列配列）が連続一致する
 // 箇所を探す。ちょうど 1 箇所だけ一致したとき { startLine, endLine } を返す。
 // 0 箇所または複数箇所（曖昧）は null。
-function matchConsecutive(lines, needle) {
+export function matchConsecutive(lines, needle) {
   if (needle.length === 0) return null;
   const found = [];
   for (let i = 0; i + needle.length <= lines.length; i++) {
@@ -156,19 +124,23 @@ function matchConsecutive(lines, needle) {
   return found[0];
 }
 
-// 1 課題を解決する。new 側優先、なければ old 側でマッチを試みる。
-function resolveIssue(issue, filesByPath) {
-  const { path, existingCode } = issue;
+// 1 課題のアンカー（existingCode）を解決する。new 側優先、なければ old 側でマッチを試みる。
+// 戻り値:
+//   解決成功: { resolved: true,  side, params: { line, startLine?, side?, startSide?, subjectType } }
+//   解決失敗: { resolved: false, reason }
+// side（"new"|"old"）を params とは別に併記するのは、機械グルーピングで side をキーに
+// 使うため（params には GitHub 用の "RIGHT"/"LEFT" が入る）。
+export function resolveAnchor({ path, existingCode }, filesByPath) {
   if (!path || !existingCode) {
-    return { path, resolved: false, reason: "path または existingCode が未指定" };
+    return { resolved: false, reason: "path または existingCode が未指定" };
   }
   const hunks = filesByPath.get(path);
   if (!hunks || hunks.length === 0) {
-    return { path, resolved: false, reason: "対象ファイルの差分が見つからない" };
+    return { resolved: false, reason: "対象ファイルの差分が見つからない" };
   }
   const needle = splitAndNormalize(existingCode);
   if (needle.length === 0) {
-    return { path, resolved: false, reason: "existingCode が空" };
+    return { resolved: false, reason: "existingCode が空" };
   }
 
   for (const side of ["new", "old"]) {
@@ -178,15 +150,15 @@ function resolveIssue(issue, filesByPath) {
     if (m.startLine === m.endLine) {
       // 単一行: line と side のみ。GitHub の単一行コメント形式。
       return {
-        path,
         resolved: true,
+        side,
         params: { line: m.endLine, side: commentSide, subjectType: "LINE" },
       };
     }
     // 複数行: startLine..line を範囲指定。
     return {
-      path,
       resolved: true,
+      side,
       params: {
         startLine: m.startLine,
         line: m.endLine,
@@ -197,63 +169,35 @@ function resolveIssue(issue, filesByPath) {
     };
   }
   return {
-    path,
     resolved: false,
     reason: "existingCode が diff に一意に一致しない（不一致または複数一致）",
   };
 }
 
-// ---- diff 取得 ---------------------------------------------------------------
+// ---- diff 取得引数の組み立て -------------------------------------------------
 // CTX（collect-review-context.mjs の出力）から `git diff` の引数を組み立てる。
 // review-core.md の統一則「git diff <diffArgs> <excludeArgs.git>」と同じ並びを再現し、
 // アンカー（existingCode）を取ったのと同一の diff をマッチ対象にする。
 // core.quotepath=false を明示することで非ASCIIパスも生の UTF-8 で出力させる。
-function buildDiffArgs(ctx) {
+export function buildDiffArgs(ctx) {
   const diffArgs = ctx.diffArgs ?? [];
   const excludeArgs = ctx.excludeArgs?.git ?? [];
   return ["-c", "core.quotepath=false", "diff", ...diffArgs, ...excludeArgs];
 }
 
-// ---- main --------------------------------------------------------------------
-if (!process.env.NODE_TEST_CONTEXT) {
-  const { context } = parseArgs(process.argv);
-
-  let issues;
-  try {
-    issues = JSON.parse(readStdin());
-  } catch (e) {
-    console.error(`Error: stdin の JSON パースに失敗しました: ${e.message}`);
-    process.exit(1);
-  }
-  if (!Array.isArray(issues)) {
-    console.error("Error: stdin は課題オブジェクトの配列である必要があります");
-    process.exit(1);
-  }
-
-  let ctx;
-  try {
-    ctx = JSON.parse(readFileSync(context, "utf8"));
-  } catch (e) {
-    console.error(`Error: CTX ファイルの読み込みに失敗しました（${context}）: ${e.message}`);
-    process.exit(1);
-  }
-
-  const diffText = execFileSync("git", buildDiffArgs(ctx), { encoding: "utf8" });
-  const filesByPath = parseDiff(diffText);
-
-  const results = issues.map((issue) => resolveIssue(issue, filesByPath));
-  console.log(JSON.stringify(results, null, 2));
-}
-
 // ---- インラインテスト --------------------------------------------------------
-// `node --test plugins/code-review/scripts/resolve-suggestion-lines.mjs` で実行する。
-// FS/ネットワーク非依存の純粋ロジック（diff パース・行番号復元・マッチ）を検証する。
-if (process.env.NODE_TEST_CONTEXT) {
+// `node --test plugins/code-review/scripts/lib/diff-anchor.mjs` で実行する。
+// lib は複数スクリプトから import されるため、テストの二重登録を防ぐガードを
+// 「NODE_TEST_CONTEXT かつ、このファイル自身が --test の対象（argv[1]）である」に
+// 強化する（他スクリプトのテスト実行中に import されても登録されない）。
+if (
+  process.env.NODE_TEST_CONTEXT &&
+  process.argv[1] === fileURLToPath(import.meta.url)
+) {
   const { test } = await import("node:test");
   const assert = (await import("node:assert/strict")).default;
 
   // 新規ファイル diff（全行 added、new 側 1..N に対応）を組み立てるヘルパ。
-  // ロジック検証に必要な形（連続行・コメント行・重複しない行）だけを持つ汎用サンプル。
   const path = "src/sample.js";
   const bodyLines = [
     "export function first() {}", // 1
@@ -279,7 +223,6 @@ if (process.env.NODE_TEST_CONTEXT) {
     const newLines = sideLines(hunks, "new");
     assert.equal(newLines[0].lineNo, 1);
     assert.equal(newLines[0].norm, "export function first() {}");
-    // 4 行目 = target 定義
     const target = newLines.find((l) => l.norm === "export function target() {}");
     assert.equal(target.lineNo, 4);
   });
@@ -291,11 +234,9 @@ if (process.env.NODE_TEST_CONTEXT) {
     assert.equal(m[3], "1");
   });
 
-  test("再現ケース: コメント削除(2行→1行)は範囲 startLine..line を返す", () => {
-    // 削除したいコメント行(3)と残す行(4)を範囲に含めるアンカー。
-    // → startLine:3, line:4 が返り、suggestion 本文から 3 行目を省けば削除になる。
+  test("resolveAnchor: コメント削除(2行→1行)は範囲 startLine..line を返す", () => {
     const files = parseDiff(buildDiff());
-    const r = resolveIssue(
+    const r = resolveAnchor(
       {
         path,
         existingCode:
@@ -304,6 +245,7 @@ if (process.env.NODE_TEST_CONTEXT) {
       files
     );
     assert.equal(r.resolved, true);
+    assert.equal(r.side, "new");
     assert.deepEqual(r.params, {
       startLine: 3,
       line: 4,
@@ -313,20 +255,16 @@ if (process.env.NODE_TEST_CONTEXT) {
     });
   });
 
-  test("単一行アンカーは line と side のみ（startLine なし）", () => {
+  test("resolveAnchor: 単一行アンカーは line と side のみ（startLine なし）", () => {
     const files = parseDiff(buildDiff());
-    const r = resolveIssue(
-      { path, existingCode: "const UNIQUE_MARKER = 1;" },
-      files
-    );
+    const r = resolveAnchor({ path, existingCode: "const UNIQUE_MARKER = 1;" }, files);
     assert.equal(r.resolved, true);
     assert.deepEqual(r.params, { line: 5, side: "RIGHT", subjectType: "LINE" });
   });
 
   test("正規化: インデント差・diff マーカー付き入力でも一致する", () => {
     const files = parseDiff(buildDiff());
-    const r = resolveIssue(
-      // 先頭に diff マーカー '+' と余分なインデントを付けても吸収される
+    const r = resolveAnchor(
       { path, existingCode: "+   export function target() {}" },
       files
     );
@@ -335,9 +273,9 @@ if (process.env.NODE_TEST_CONTEXT) {
     assert.equal(r.params.subjectType, "LINE");
   });
 
-  test("不一致の existingCode は resolved:false", () => {
+  test("resolveAnchor: 不一致の existingCode は resolved:false", () => {
     const files = parseDiff(buildDiff());
-    const r = resolveIssue(
+    const r = resolveAnchor(
       { path, existingCode: "export function nonexistent() {}" },
       files
     );
@@ -345,8 +283,7 @@ if (process.env.NODE_TEST_CONTEXT) {
     assert.match(r.reason, /一致/);
   });
 
-  test("複数一致（曖昧）は resolved:false", () => {
-    // 同一行が 2 回出現する diff を作る。
+  test("resolveAnchor: 複数一致（曖昧）は resolved:false", () => {
     const diff = [
       "diff --git a/src/dup.js b/src/dup.js",
       "--- /dev/null",
@@ -357,21 +294,18 @@ if (process.env.NODE_TEST_CONTEXT) {
       "+dup",
     ].join("\n");
     const files = parseDiff(diff);
-    const r = resolveIssue({ path: "src/dup.js", existingCode: "dup" }, files);
+    const r = resolveAnchor({ path: "src/dup.js", existingCode: "dup" }, files);
     assert.equal(r.resolved, false);
   });
 
-  test("差分にないファイルは resolved:false", () => {
+  test("resolveAnchor: 差分にないファイルは resolved:false", () => {
     const files = parseDiff(buildDiff());
-    const r = resolveIssue(
-      { path: "src/other.js", existingCode: "anything" },
-      files
-    );
+    const r = resolveAnchor({ path: "src/other.js", existingCode: "anything" }, files);
     assert.equal(r.resolved, false);
     assert.match(r.reason, /差分が見つからない/);
   });
 
-  test("削除行(old側)にもマッチする", () => {
+  test("resolveAnchor: 削除行(old側)にもマッチする", () => {
     const diff = [
       "diff --git a/src/edit.js b/src/edit.js",
       "--- a/src/edit.js",
@@ -382,20 +316,14 @@ if (process.env.NODE_TEST_CONTEXT) {
       " keep_after",
     ].join("\n");
     const files = parseDiff(diff);
-    const r = resolveIssue(
-      { path: "src/edit.js", existingCode: "removed_line" },
-      files
-    );
+    const r = resolveAnchor({ path: "src/edit.js", existingCode: "removed_line" }, files);
     assert.equal(r.resolved, true);
-    // old 側 10=keep_before, 11=removed_line
+    assert.equal(r.side, "old");
     assert.equal(r.params.line, 11);
     assert.equal(r.params.side, "LEFT");
   });
 
   test("非ASCIIパス: quotepath=false の生UTF-8 diff で行番号を解決できる", () => {
-    // `git -c core.quotepath=false diff` は非ASCIIパスをクォート/8進エスケープせず
-    // 生の UTF-8 で出力する。その diff（呼び出し元 SKILL の統一 diff と同一形式）を
-    // そのままパースでき、stdin の UTF-8 パスと一致することを確認する。
     const nonAsciiPath = "docs/仕様メモ.md";
     const diff = [
       `diff --git a/${nonAsciiPath} b/${nonAsciiPath}`,
@@ -408,7 +336,7 @@ if (process.env.NODE_TEST_CONTEXT) {
     ].join("\n");
     const files = parseDiff(diff);
     assert.ok(files.get(nonAsciiPath), "UTF-8 パスで hunk が引けること");
-    const r = resolveIssue({ path: nonAsciiPath, existingCode: "# 見出し" }, files);
+    const r = resolveAnchor({ path: nonAsciiPath, existingCode: "# 見出し" }, files);
     assert.equal(r.resolved, true);
     assert.equal(r.params.line, 1);
     assert.equal(r.params.side, "RIGHT");
