@@ -1,7 +1,7 @@
 ---
 name: pr-review
 description: 指定されたGitHubプルリクエストに対して、複数の専門エージェント（CLAUDE.md準拠/バグ検出/REVIEW.md準拠）を並列起動して多角的なコードレビューを実施するスキル。
-allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh pr diff:*), Bash(gh repo view:*), Bash(gh api:*), Bash(git rev-parse:*), Bash(git diff:*), Bash(node:*), Bash(jq:*)
+allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh repo view:*), Bash(gh api:*), Bash(git rev-parse:*), Bash(git diff:*), Bash(node:*), Bash(jq:*)
 disable-model-invocation: true
 ---
 
@@ -45,7 +45,7 @@ disable-model-invocation: true
    - `commentBody`: suggestion ブロックを除いたコメント文（課題の概要・引用元リンク）。
 
 9. 各課題の行番号を **スクリプトで確定する**。**行番号（`line` / `startLine`）を自分で推測して指定してはならない。** LLM が行番号を推測すると diff にマッピングできない指定（特に削除を伴う修正）になり、GitHub 側で位置解決に失敗して `line: null` 化する。手順:
-   - ステップ8の各課題から `{ path, existingCode }` の配列を作り、`node ${CLAUDE_PLUGIN_ROOT}/scripts/resolve-suggestion-lines.mjs --pr <PR>` に **stdin で JSON を渡す**（`existingCode` の改行は `\n` としてJSONエスケープすること）。
+   - ステップ8の各課題から `{ path, existingCode }` の配列を作り、`node ${CLAUDE_PLUGIN_ROOT}/scripts/resolve-suggestion-lines.mjs --context "$CTX"` に **stdin で JSON を渡す**（`$CTX` はステップ1で束ねた CTX ファイルパス。`existingCode` の改行は `\n` としてJSONエスケープすること）。スクリプトは CTX の `diffArgs` / `excludeArgs.git` から `git -c core.quotepath=false diff ...` を実行し、レビューに使ったのと同一の統一 diff にアンカーをマッチさせる（別ソースの diff を引き直さないため、除外ファイル・非ASCIIパス等のずれが起きない）。
    - スクリプトは各課題について diff hunk とテキストマッチして行番号を機械的に確定し、入力と同順の配列を返す:
      - `{ path, resolved: true, params: { line, startLine?, side?, startSide?, subjectType } }`: 行番号確定に成功した課題。ステップ10でこの要素に `body` を足してそのまま投稿する（`params` は分解・再構成しない）。
      - `{ path, resolved: false, reason }`: 該当箇所を diff から一意に特定できなかった課題。**インラインコメントにせず**、ステップ10のレビューサマリ本文に文章で記載する（誤った位置に貼らない）。`existingCode` が diff と逐語一致していない可能性が高いので、必要なら `existingCode` を diff に合わせて修正し再実行してもよい。

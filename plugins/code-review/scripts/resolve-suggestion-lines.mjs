@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// suggestion の行番号を PR の diff から機械的に確定するスクリプト。
+// suggestion の行番号をレビュー対象の diff から機械的に確定するスクリプト。
 //
 // 背景: LLM に行番号（line/startLine）を推測させると diff にマッピングできない指定
 // （例: 削除を含む修正を単一行で表現してしまう）が生まれ、GitHub 側で位置解決に失敗し
@@ -9,10 +9,15 @@
 // 呼び出し側でインライン化せずサマリへ退避させる（誤位置に貼らない）。
 //
 // 入力:
-//   引数 --pr <PR>   : 対象 PR。diff は `gh pr diff <PR>` で取得。
-//   stdin (JSON)     : 課題の配列 [{ path, existingCode }]
-//                        path         : 対象ファイルの相対パス
-//                        existingCode : diff 中に実在する連続した数行（アンカー）
+//   引数 --context <CTX> : collect-review-context.mjs が書き出した CTX ファイルのパス。
+//                          そこから diffArgs / excludeArgs.git を読み、diff は
+//                          `git -c core.quotepath=false diff <diffArgs> <excludeArgs.git>` で取得する。
+//                          呼び出し元 SKILL がレビューに使う統一 diff（review-core.md の統一則）と
+//                          完全に同一ソースになるため、アンカー（existingCode）との不整合が起きない。
+//                          quotepath=false 固定なので非ASCIIパスも生の UTF-8 で出力される。
+//   stdin (JSON)         : 課題の配列 [{ path, existingCode }]
+//                            path         : 対象ファイルの相対パス
+//                            existingCode : diff 中に実在する連続した数行（アンカー）
 // 出力(stdout, JSON): 入力と同順の配列
 //   解決成功: { path, resolved: true,  params: { line, startLine?, side?, startSide?, subjectType } }
 //   解決失敗: { path, resolved: false, reason }
@@ -22,9 +27,9 @@ import { readFileSync } from "node:fs";
 // ---- 引数パース --------------------------------------------------------------
 function parseArgs(argv) {
   const args = argv.slice(2);
-  if (args[0] === "--pr" && args[1]) return { pr: args[1] };
+  if (args[0] === "--context" && args[1]) return { context: args[1] };
   console.error(
-    "Usage: resolve-suggestion-lines.mjs --pr <PR>  (課題配列 JSON を stdin で渡す)"
+    "Usage: resolve-suggestion-lines.mjs --context <CTX>  (課題配列 JSON を stdin で渡す)"
   );
   process.exit(1);
 }
@@ -43,6 +48,8 @@ function readStdin() {
 // count は省略可（1 行 hunk のとき）。
 const hunkHeaderRe = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 // `diff --git a/<path> b/<path>` からファイルパスを取り出す。
+// diff は `git -c core.quotepath=false diff` で取得するため、非ASCIIパスもクォート＋
+// 8進エスケープされず生の UTF-8 で出力される（呼び出し元 SKILL の統一 diff と同一形式）。
 const fileHeaderRe = /^diff --git a\/(.+?) b\/(.+)$/;
 
 // unified diff テキストを { path -> hunks[] } に分解する。
@@ -196,9 +203,20 @@ function resolveIssue(issue, filesByPath) {
   };
 }
 
+// ---- diff 取得 ---------------------------------------------------------------
+// CTX（collect-review-context.mjs の出力）から `git diff` の引数を組み立てる。
+// review-core.md の統一則「git diff <diffArgs> <excludeArgs.git>」と同じ並びを再現し、
+// アンカー（existingCode）を取ったのと同一の diff をマッチ対象にする。
+// core.quotepath=false を明示することで非ASCIIパスも生の UTF-8 で出力させる。
+function buildDiffArgs(ctx) {
+  const diffArgs = ctx.diffArgs ?? [];
+  const excludeArgs = ctx.excludeArgs?.git ?? [];
+  return ["-c", "core.quotepath=false", "diff", ...diffArgs, ...excludeArgs];
+}
+
 // ---- main --------------------------------------------------------------------
 if (!process.env.NODE_TEST_CONTEXT) {
-  const { pr } = parseArgs(process.argv);
+  const { context } = parseArgs(process.argv);
 
   let issues;
   try {
@@ -212,7 +230,15 @@ if (!process.env.NODE_TEST_CONTEXT) {
     process.exit(1);
   }
 
-  const diffText = execFileSync("gh", ["pr", "diff", pr], { encoding: "utf8" });
+  let ctx;
+  try {
+    ctx = JSON.parse(readFileSync(context, "utf8"));
+  } catch (e) {
+    console.error(`Error: CTX ファイルの読み込みに失敗しました（${context}）: ${e.message}`);
+    process.exit(1);
+  }
+
+  const diffText = execFileSync("git", buildDiffArgs(ctx), { encoding: "utf8" });
   const filesByPath = parseDiff(diffText);
 
   const results = issues.map((issue) => resolveIssue(issue, filesByPath));
@@ -364,5 +390,52 @@ if (process.env.NODE_TEST_CONTEXT) {
     // old 側 10=keep_before, 11=removed_line
     assert.equal(r.params.line, 11);
     assert.equal(r.params.side, "LEFT");
+  });
+
+  test("非ASCIIパス: quotepath=false の生UTF-8 diff で行番号を解決できる", () => {
+    // `git -c core.quotepath=false diff` は非ASCIIパスをクォート/8進エスケープせず
+    // 生の UTF-8 で出力する。その diff（呼び出し元 SKILL の統一 diff と同一形式）を
+    // そのままパースでき、stdin の UTF-8 パスと一致することを確認する。
+    const nonAsciiPath = "docs/仕様メモ.md";
+    const diff = [
+      `diff --git a/${nonAsciiPath} b/${nonAsciiPath}`,
+      "new file mode 100644",
+      "--- /dev/null",
+      `+++ b/${nonAsciiPath}`,
+      "@@ -0,0 +1,2 @@",
+      "+# 見出し",
+      "+本文行",
+    ].join("\n");
+    const files = parseDiff(diff);
+    assert.ok(files.get(nonAsciiPath), "UTF-8 パスで hunk が引けること");
+    const r = resolveIssue({ path: nonAsciiPath, existingCode: "# 見出し" }, files);
+    assert.equal(r.resolved, true);
+    assert.equal(r.params.line, 1);
+    assert.equal(r.params.side, "RIGHT");
+  });
+
+  test("buildDiffArgs: range モードは core.quotepath=false 付きで range を渡す", () => {
+    const args = buildDiffArgs({ diffArgs: ["abc123...HEAD"], excludeArgs: { git: [] } });
+    assert.deepEqual(args, ["-c", "core.quotepath=false", "diff", "abc123...HEAD"]);
+  });
+
+  test("buildDiffArgs: staged モードと除外引数を連結する", () => {
+    const args = buildDiffArgs({
+      diffArgs: ["--staged"],
+      excludeArgs: { git: ["--", ".", ":(exclude)dist/x.js"] },
+    });
+    assert.deepEqual(args, [
+      "-c",
+      "core.quotepath=false",
+      "diff",
+      "--staged",
+      "--",
+      ".",
+      ":(exclude)dist/x.js",
+    ]);
+  });
+
+  test("buildDiffArgs: diffArgs/excludeArgs 欠落時も落ちない", () => {
+    assert.deepEqual(buildDiffArgs({}), ["-c", "core.quotepath=false", "diff"]);
   });
 }
