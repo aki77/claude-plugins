@@ -15,3 +15,7 @@
 
 - `jq` (used by several hooks)
 - `node` (used by package-manager-enforcer)
+
+## Testing
+
+- `plugins/*/scripts/*.mjs` のインラインテストは `NODE_TEST_CONTEXT=1 node <file>` で実行する（`node --test` は "run() called recursively" 警告が出てテストが走らない）
