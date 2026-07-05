@@ -55,6 +55,15 @@ const TIER_THRESHOLDS = {
   },
 };
 
+// 1ファイルの変更行数（追加+削除）がこれを「超えたら」レビュー対象から外し oversizedFiles に
+// 分離する（generated/バイナリの excludedFiles とは別枠。こちらは「大規模ゆえに個別レビューが
+// 困難」）。本プラグインはトークン実測機構を持たないため行数で近似する。デフォルト 1000 は
+// 複数ファイルを1エージェントに渡す本構成で単一ファイルがコンテキストを占有しすぎない中庸値。
+// 環境変数で調整可能。tier の行数しきい値（TIER_THRESHOLDS.small.maxLines 等）より大きい前提で、
+// これを下げて tier しきい値を下回らせると「単一ファイルが tier しきい値を跨ぐ前に oversized 落ち」
+// して tier の意味が変わるので注意（両しきい値とも「変更規模の分類」という同じ概念系に属する）。
+const OVERSIZED_MAX_LINES = num(process.env.CODE_REVIEW_OVERSIZED_MAX_LINES, 1000);
+
 // 変更規模から tier（"tiny" | "small" | "normal"）を決める純粋関数。
 // tiny/small はいずれも「ファイル数 AND 行数」の両方がしきい値未満のときのみ該当し、
 // どちらか一方でも超えたら上位 tier（最終的に normal）へ繰り上がる。
@@ -181,8 +190,12 @@ function parseNumstat(out) {
 // レビュー対象（kept）ファイルの変更「行数」を算出する。
 // diffArgs（range or --staged）と excludeArgs.git（生成物・バイナリの除外 pathspec）を
 // 本 diff とまったく同じ引数で numstat に渡すことで、tier 判定が本 diff とズレないようにする。
-// numstat はパスを復元しない（tier 判定に使うのは行数だけ。ファイル数は changedFiles が正）ため
-// core.quotepath は不要。バイナリ行（added/deleted が null）は行数集計に含めない。
+// バイナリ行（added/deleted が null）は行数集計に含めない。
+// perFile は「numstat の生パス → { added, deleted }」の Map。oversized 検出と、oversized を
+// 除いた metrics の再計算（git を再実行せず減算で求める）に使う。
+// numstat の path は rename 時に `old => new` 等の形式になりうるが、正規化はしない
+// （呼び出し側で kept セットと素朴照合し、照合できないものは oversized 判定から漏れて
+// レビュー対象に残る＝安全側。複雑な rename 正規化を持ち込んでバグ源にしない）。
 function collectChangedLines(diffArgs, excludeArgs) {
   const args = ["diff", "--numstat", "--find-renames", ...diffArgs, ...excludeArgs];
   let out;
@@ -193,15 +206,19 @@ function collectChangedLines(diffArgs, excludeArgs) {
     });
   } catch {
     // numstat の取得に失敗しても tier 判定を落とさない（normal 相当＝全エージェント起動）。
-    return { totalAdded: 0, totalDeleted: 0, totalChangedLines: 0 };
+    return { totalAdded: 0, totalDeleted: 0, totalChangedLines: 0, perFile: new Map() };
   }
   let totalAdded = 0;
   let totalDeleted = 0;
+  const perFile = new Map();
   for (const r of parseNumstat(out)) {
     if (r.added != null) totalAdded += r.added;
     if (r.deleted != null) totalDeleted += r.deleted;
+    if (r.added != null && r.deleted != null) {
+      perFile.set(r.path, { added: r.added, deleted: r.deleted });
+    }
   }
-  return { totalAdded, totalDeleted, totalChangedLines: totalAdded + totalDeleted };
+  return { totalAdded, totalDeleted, totalChangedLines: totalAdded + totalDeleted, perFile };
 }
 
 function splitLines(out) {
@@ -439,6 +456,22 @@ function buildExcludeArgs(excludedFiles) {
   return { git };
 }
 
+// kept ファイルを、変更行数（added+deleted）が maxLines を「超える」oversized と、それ以外の
+// changedFiles に単一ループで振り分ける純粋関数（classifyFiles と同じ2バケット push 方式）。
+// perFile は collectChangedLines が返す「numstat 生パス → { added, deleted }」の Map。
+// 境界（ちょうど maxLines）はレビュー対象に残す（strictly greater）。numstat 側にしか現れない
+// rename 生パス等は kept に無い＝perFile.get が undefined なので oversized 判定から漏れる（安全側）。
+function splitOversized(keptFiles, perFile, maxLines) {
+  const changedFiles = [];
+  const oversizedFiles = [];
+  for (const f of keptFiles) {
+    const stat = perFile.get(f);
+    const lines = stat ? stat.added + stat.deleted : null;
+    (lines != null && lines > maxLines ? oversizedFiles : changedFiles).push(f);
+  }
+  return { changedFiles, oversizedFiles: oversizedFiles.sort() };
+}
+
 // PR/range 全体で「適用されうる」ルール一覧を収集する。
 // paths が null（全ファイル適用）か、変更ファイルのいずれかが paths にマッチするものを残す。
 async function collectRules(changedFiles) {
@@ -602,20 +635,47 @@ if (!process.env.NODE_TEST_CONTEXT) {
     (f) => !fileMatchesPatterns(f, DEFAULT_EXCLUDE_GLOBS)
   );
   const attrExcludedSet = detectLinguistExcluded(globSurvivors);
-  const { kept: changedFiles, excluded: excludedFiles } = classifyFiles(rawFiles, {
+  const { kept: keptFiles, excluded: excludedFiles } = classifyFiles(rawFiles, {
     attrExcludedSet,
   });
 
+  const diffArgs = range ? [range] : ["--staged"];
+
+  // まず「生成物/バイナリのみ除外」した diff で numstat を取り、ファイル別行数を得る。
+  // この perFile から oversized（1ファイルが巨大な変更）を分離する。行数集計は同じ出力から
+  // 得られるので numstat は1回だけ（追加コストなし）。
+  const lineStats = collectChangedLines(diffArgs, buildExcludeArgs(excludedFiles).git);
+  const { changedFiles, oversizedFiles } = splitOversized(
+    keptFiles,
+    lineStats.perFile,
+    OVERSIZED_MAX_LINES
+  );
+
   const rules = await collectRules(changedFiles);
 
-  // 変更規模メトリクスと tier を算出する（本 diff と同じ diffArgs + 除外 pathspec で numstat）。
-  // これらの引数は下の output.diffArgs / excludeArgs.git と同一構築（ズレると tier 判定が歪む）。
-  const diffArgs = range ? [range] : ["--staged"];
-  const excludeArgs = buildExcludeArgs(excludedFiles);
-  // ファイル数は kept を正とする changedFiles.length、行数は numstat から得る。
+  // 最終の除外引数は excludedFiles（生成物/バイナリ）と oversizedFiles（大規模）の両方を含む。
+  // 以降の diff 取得・アンカー解決はすべてこの excludeArgs.git を経由するため、oversized は
+  // 全 diff から一様に消える（emit-diff / diff-anchor は無改修で整合する）。
+  const excludeArgs = buildExcludeArgs([...excludedFiles, ...oversizedFiles]);
+
+  // メトリクス・tier は oversized を除いた「実際にレビューする」規模で確定する。
+  // oversized 分の行数は上の numstat（perFile）から減算するだけで求まるため git は再実行しない。
+  // oversized は kept と照合済みで perFile に必ず存在し、バイナリ行は perFile に載らないので
+  // 減算に混入しない。ファイル数は changedFiles.length（oversized 除外後）。
+  let oversizedAdded = 0;
+  let oversizedDeleted = 0;
+  for (const f of oversizedFiles) {
+    const stat = lineStats.perFile.get(f);
+    oversizedAdded += stat.added;
+    oversizedDeleted += stat.deleted;
+  }
+  const totalAdded = lineStats.totalAdded - oversizedAdded;
+  const totalDeleted = lineStats.totalDeleted - oversizedDeleted;
   const metrics = {
     totalFiles: changedFiles.length,
-    ...collectChangedLines(diffArgs, excludeArgs.git),
+    totalAdded,
+    totalDeleted,
+    totalChangedLines: totalAdded + totalDeleted,
   };
   const tier = classifyTier(metrics.totalFiles, metrics.totalChangedLines);
 
@@ -630,6 +690,9 @@ if (!process.env.NODE_TEST_CONTEXT) {
     source,
     changedFiles,
     excludedFiles,
+    // 変更行数が閾値超で個別レビューが困難と判断し、レビュー対象から外したファイル。
+    // excludedFiles（生成物/バイナリ）とは除外理由が異なる別枠。excludeArgs.git にも含まれる。
+    oversizedFiles,
     // 各 diff 取得コマンド向けの除外引数（SKILL 側は jq で取り出して連結するだけ）。
     excludeArgs,
     assignments,
@@ -843,6 +906,14 @@ if (process.env.NODE_TEST_CONTEXT) {
     assert.equal(rows[0].path, "src/a.ts");
   });
 
+  test("parseNumstat: rename 生パス（old => new）はそのまま path に入る", () => {
+    // 正規化しない設計の確認（splitOversized 側の照合漏れ＝安全側挙動の前提）。
+    const out = "10\t2\tsrc/old.rb => src/new.rb\n";
+    const rows = parseNumstat(out);
+    assert.equal(rows[0].path, "src/old.rb => src/new.rb");
+    assert.equal(rows[0].added + rows[0].deleted, 12);
+  });
+
   test("classifyFiles: デフォルト glob（ミニファイ/生成物/バイナリ）を除外する", () => {
     const files = [
       "src/app.js",
@@ -927,6 +998,76 @@ if (process.env.NODE_TEST_CONTEXT) {
       ".",
       ":(exclude)dist/a.js",
       ":(exclude)b.png",
+    ]);
+  });
+
+  // ---- oversized（単一巨大ファイル）分離 ----
+  // perFile の値は { added, deleted }（変更行数 = added + deleted で判定）。
+  const stat = (total) => ({ added: total, deleted: 0 });
+  test("splitOversized: 閾値を超えたファイルだけ分離し、境界（= 閾値）は残す", () => {
+    const kept = ["a.rb", "b.rb", "c.rb"];
+    const perFile = new Map([
+      ["a.rb", stat(1001)], // 超過 → oversized
+      ["b.rb", stat(1000)], // ちょうど → レビュー対象に残す（strictly greater）
+      ["c.rb", stat(10)], // 通常
+    ]);
+    const { changedFiles, oversizedFiles } = splitOversized(kept, perFile, 1000);
+    assert.deepEqual(oversizedFiles, ["a.rb"]);
+    assert.deepEqual(changedFiles, ["b.rb", "c.rb"]);
+  });
+
+  test("splitOversized: added+deleted の合算で閾値判定する", () => {
+    const kept = ["a.rb"];
+    const perFile = new Map([["a.rb", { added: 600, deleted: 500 }]]); // 合計 1100 > 1000
+    const { oversizedFiles } = splitOversized(kept, perFile, 1000);
+    assert.deepEqual(oversizedFiles, ["a.rb"]);
+  });
+
+  test("splitOversized: perFile に無い kept（照合漏れ・rename 生パス等）はレビュー対象に残す", () => {
+    // numstat が rename を `old => new` で出し kept の新パスと一致しないケースの安全側挙動。
+    const kept = ["src/renamed.rb"];
+    const perFile = new Map([["src/old.rb => src/renamed.rb", stat(5000)]]);
+    const { changedFiles, oversizedFiles } = splitOversized(kept, perFile, 1000);
+    assert.deepEqual(oversizedFiles, []);
+    assert.deepEqual(changedFiles, ["src/renamed.rb"]);
+  });
+
+  test("splitOversized: oversized は sort 済み配列で返る", () => {
+    const kept = ["z.rb", "a.rb"];
+    const perFile = new Map([
+      ["z.rb", stat(2000)],
+      ["a.rb", stat(2000)],
+    ]);
+    const { oversizedFiles } = splitOversized(kept, perFile, 1000);
+    assert.deepEqual(oversizedFiles, ["a.rb", "z.rb"]);
+  });
+
+  test("splitOversized: 全ファイルが oversized なら changedFiles は空", () => {
+    const kept = ["a.rb", "b.rb"];
+    const perFile = new Map([
+      ["a.rb", stat(3000)],
+      ["b.rb", stat(3000)],
+    ]);
+    const { changedFiles, oversizedFiles } = splitOversized(kept, perFile, 1000);
+    assert.deepEqual(changedFiles, []);
+    assert.deepEqual(oversizedFiles, ["a.rb", "b.rb"]);
+  });
+
+  test("splitOversized→buildExcludeArgs: excluded と oversized の両方が :(exclude) に入る", () => {
+    // main のフロー相当（生成物除外 + 大規模除外を1つの excludeArgs にまとめる）。
+    const excludedFiles = ["dist/bundle.js"];
+    const kept = ["src/big.rb", "src/small.rb"];
+    const perFile = new Map([
+      ["src/big.rb", stat(2000)],
+      ["src/small.rb", stat(20)],
+    ]);
+    const { oversizedFiles } = splitOversized(kept, perFile, 1000);
+    const args = buildExcludeArgs([...excludedFiles, ...oversizedFiles]);
+    assert.deepEqual(args.git, [
+      "--",
+      ".",
+      ":(exclude)dist/bundle.js",
+      ":(exclude)src/big.rb",
     ]);
   });
 

@@ -37,11 +37,12 @@ CTX（ステップ1） → CLUSTERS（ステップ2b） → FINDINGS（ステッ
    - `metrics`: 変更規模の内訳（`{ totalFiles, totalAdded, totalDeleted, totalChangedLines }`）。`tier` 判定の根拠であり、サマリ表示や参考に使ってよい。
    - `changedFiles`: レビュー対象の変更ファイルパスの**文字列配列**（オブジェクトではない。例: `["a/b.ts", "c/d.rb"]`。下記フィルタで除外されたものは含まれない）。取り出すときは `.path` を付けず `jq -r '.changedFiles[]' "$CTX"` とすること。
    - `excludedFiles`: レビュー対象から**機械的に除外**した変更ファイル一覧。`changedFiles` と同型の**文字列配列**（生成物・ミニファイ・バイナリ、または `.gitattributes` の `linguist-generated=true`）。**具体的な除外条件はスクリプトが確定済みで、この配列が唯一の正**。SKILL 側で条件を再判定・列挙しないこと。
-   - `excludeArgs`: 除外ファイルを diff から落とすための、コマンド別の**組み立て済み引数**。`excludeArgs.git` は `git diff` 用（`-- . ':(exclude)<path>' ...`）。除外ファイルが無ければ空配列。
+   - `oversizedFiles`: 変更行数（追加+削除）が閾値を超え、個別レビューが困難と判断してレビュー対象から**外した**変更ファイル一覧。`changedFiles`/`excludedFiles` と同型の**文字列配列**。`excludedFiles`（生成物/バイナリ）とは除外理由が異なる（こちらは「大規模変更による精度・コンテキストのリスク」）。**閾値はスクリプトが確定済みで、この配列が唯一の正**。`changedFiles`・`assignments`・`metrics`・各 diff からすべて除かれている（`excludeArgs.git` にも含まれる）。SKILL 側で条件を再判定・列挙しないこと。
+   - `excludeArgs`: 除外ファイルを diff から落とすための、コマンド別の**組み立て済み引数**。`excludeArgs.git` は `git diff` 用（`-- . ':(exclude)<path>' ...`）。`excludedFiles` と `oversizedFiles` の**両方**を除外対象に含む。除外ファイルが無ければ空配列。
    - `assignments`: エージェント1・2への担当割り当て（2要素の配列。`assignments[0]` がエージェント1用、`assignments[1]` がエージェント2用）。**`changedFiles`/`excludedFiles`（文字列配列）とは異なり**、各要素は `files` を持ち、`files` は `{ path, rules }` の**オブジェクト配列**。
      - `path`: 担当する変更ファイルのパス。
      - `rules`: そのファイルに適用されるルールファイルのパス一覧（適用される CLAUDE.md と `.claude/rules/` を区別なく列挙。親ディレクトリのCLAUDE.md・`paths` がそのファイルに一致する `.claude/rules/`・`paths` 未指定の全適用ルールがすべて含まれ、一致しないルールは含まれない）。スコープ判定はスクリプトが済ませているため、エージェントは `rules` をそのまま参照すればよい。
-   - `assignments` は `excludedFiles` を除いた `changedFiles` のみを対象に組まれている（エージェント1・2は自動的に除外ファイルをスキップする）。適用ルールセットが同一のファイルが同一エージェントに寄せられ、かつ各エージェントが担当ファイルに不要なルールを読まずに済むよう、スクリプトが決定論的に振り分け済み。
+   - `assignments` は `excludedFiles` と `oversizedFiles` を除いた `changedFiles` のみを対象に組まれている（エージェント1・2は自動的に除外ファイル・大規模ファイルをスキップする）。適用ルールセットが同一のファイルが同一エージェントに寄せられ、かつ各エージェントが担当ファイルに不要なルールを読まずに済むよう、スクリプトが決定論的に振り分け済み。
 
    **diff 取得の統一則: 以降 diff を取得するすべての箇所では、`node ${CLAUDE_PLUGIN_ROOT}/scripts/emit-diff.mjs --context "$CTX"` を実行すること**（この単一コマンドが CTX の `diffArgs`（range / `--staged`）と `excludeArgs`（レビュー対象外ファイルの除外）を内部で組み立て、除外適用済みの diff を標準出力に直出しする。`$(...)` を含まないため headless でも通る）。これによりエージェント3・5 やサマリエージェントが読む diff からも生成物・バイナリが除かれる。全モードでこの1コマンドに統一されているため、モードによる diff コマンドの分岐は不要。**エージェント4（クラスタ担当）だけは担当クラスタに絞った diff を使う**（下記ステップ3のエージェント4を参照）。**スクリプト（process-findings.mjs 等）は CTX から同一の diff を内部で再生成する**ため、行番号解決は必ずレビューに使ったのと同じ diff に対して行われる。
 
@@ -194,6 +195,7 @@ CTX（ステップ1） → CLUSTERS（ステップ2b） → FINDINGS（ステッ
    - `FINAL.rejected` / `FINAL.unverified` が空でなければ、それぞれ件数を明示する（`jq -r '.stats.rejected' "$FINAL"` / `jq -r '.stats.unverified' "$FINAL"`）。黙って消えていないことを可視化する。
    - 課題が見つからなかった場合（`FINAL.issues` が空）は、「問題は見つかりませんでした。バグ・プロジェクトルール（CLAUDE.md / .claude/rules/）準拠・REVIEW.md準拠を確認しました。」と表示する。
    - `excludedFiles` が空でない場合は、末尾に「レビュー対象外: N ファイル（生成物/バイナリ等）」と件数を明示し、対象ファイル名を一覧する（`jq -r '.excludedFiles | length' "$CTX"` と `jq -r '.excludedFiles[]' "$CTX"` を使う）。暗黙にスキップしたと誤解されないよう、必ず表示すること。
+   - `oversizedFiles` が空でない場合は、末尾に「レビュー対象外（大規模変更）: N ファイル」と件数を明示し、対象ファイル名を一覧する（`jq -r '.oversizedFiles | length' "$CTX"` と `jq -r '.oversizedFiles[]' "$CTX"` を使う）。`excludedFiles`（生成物/バイナリ）とは別項目として、変更行数が大きすぎてレビュー対象から外したことを可視化する。暗黙にスキップしたと誤解されないよう、必ず表示すること。
    - `tier` が `"normal"` 以外（`tiny` / `small`）の場合は、末尾に「変更規模: <tier>（N ファイル / M 行）— 一部のレビューエージェントを省略しました」と明示する（`jq -r '.tier' "$CTX"`、`jq -r '.metrics.totalFiles' "$CTX"`、`jq -r '.metrics.totalChangedLines' "$CTX"` を使う）。エージェントを暗黙に減らしたと誤解されないよう、縮退したことを可視化する。
    - この後の動作は **ステップ8の追加要素と完了後の動作**（モード別パラメータ表）に従う（呼び出し元の追加ステップへ進むか、ここで終了するか）。
 
