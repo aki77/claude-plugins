@@ -14,7 +14,7 @@
 // 出力(stdout): CLUSTERS 成果物ファイルのパス（1行）。中身は
 //   { clusters, fallback, removedPaths, appendedPaths }
 import { fileURLToPath } from "node:url";
-import { fail, parseFlags, readArtifact, readStdinJson, writeArtifact } from "./lib/artifact.mjs";
+import { fail, parseFlags, readArtifact, readSingleInputJson, writeArtifact } from "./lib/artifact.mjs";
 
 const MAX_CLUSTERS = 3;
 
@@ -117,10 +117,12 @@ export function validateClusters(rawClusters, changedFiles) {
 
 // ---- main --------------------------------------------------------------------
 if (!process.env.NODE_TEST_CONTEXT) {
-  const { context } = parseFlags(process.argv, {
-    flags: ["--context"],
+  const { context, infile } = parseFlags(process.argv, {
+    flags: ["--context", "--infile"],
     required: ["--context"],
-    usage: "validate-clusters.mjs --context <CTX>  (clusters JSON を stdin で渡す)",
+    multi: ["--infile"],
+    usage:
+      "validate-clusters.mjs --context <CTX> --infile <clusters.json>  (--infile 省略時は stdin)",
   });
 
   let ctx;
@@ -131,10 +133,10 @@ if (!process.env.NODE_TEST_CONTEXT) {
   }
   const changedFiles = ctx.changedFiles ?? [];
 
-  // stdin が JSON でない場合も縮退で吸収する（サマリエージェント失敗時の縮退経路一本化）。
+  // 入力が JSON でない/読めない場合も縮退で吸収する（サマリエージェント失敗時の縮退経路一本化）。
   let rawClusters;
   try {
-    rawClusters = readStdinJson();
+    rawClusters = readSingleInputJson(infile);
   } catch {
     rawClusters = null; // → validateClusters が単一クラスタへ縮退させる
   }

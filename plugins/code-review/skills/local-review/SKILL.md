@@ -1,7 +1,7 @@
 ---
 name: local-review
 description: ローカルブランチの変更に対して、複数の専門エージェント（CLAUDE.md準拠/バグ検出/REVIEW.md準拠）を並列起動して多角的なコードレビューを実施するスキル。PR作成前のレビューに使用する。
-allowed-tools: Bash(git:*), Bash(node:*), Bash(jq:*)
+allowed-tools: Bash(git:*), Bash(node:*), Bash(jq:*), Write
 disable-model-invocation: true
 ---
 

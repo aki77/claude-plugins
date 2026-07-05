@@ -14,7 +14,7 @@
 // 出力(stdout): FINAL 成果物ファイルのパス（1行）。中身は
 //   { issues:[confirmed の issue 全体], rejected:[{id,path,title,reason}], unverified:[id...], stats }
 import { fileURLToPath } from "node:url";
-import { fail, parseFlags, readArtifact, readStdinJson, writeArtifact } from "./lib/artifact.mjs";
+import { fail, parseFlags, readArtifact, readInputJsonList, writeArtifact } from "./lib/artifact.mjs";
 
 const VALID_VERDICTS = new Set(["confirmed", "rejected"]);
 
@@ -71,10 +71,12 @@ export function applyVerdicts(issuesDoc, verdicts) {
 
 // ---- main --------------------------------------------------------------------
 if (!process.env.NODE_TEST_CONTEXT) {
-  const { issues } = parseFlags(process.argv, {
-    flags: ["--issues"],
+  const { issues, infile } = parseFlags(process.argv, {
+    flags: ["--issues", "--infile"],
     required: ["--issues"],
-    usage: "apply-verdicts.mjs --issues <ISSUES>  (verdict [{id,verdict,reason}] を stdin で渡す)",
+    multi: ["--infile"],
+    usage:
+      "apply-verdicts.mjs --issues <ISSUES> --infile <v1.json> [--infile <v2.json> ...]  (各 --infile は verdict オブジェクト1件 or 配列。--infile 省略時は stdin で配列)",
   });
 
   let issuesDoc;
@@ -84,11 +86,14 @@ if (!process.env.NODE_TEST_CONTEXT) {
     fail(e.message);
   }
 
+  // 各検証エージェントは verdict オブジェクト1件を1ファイルに書く（--infile 複数）。
+  // flat() で、各ファイルが単一オブジェクト・配列のどちらで書かれていても verdict 配列に均す
+  // （stdin fallback の verdict 配列1本も同様に均される）。
   let verdicts;
   try {
-    verdicts = readStdinJson();
+    verdicts = readInputJsonList(infile).flat();
   } catch (e) {
-    fail(`stdin の JSON パースに失敗しました: ${e.message}`);
+    fail(`入力 JSON のパースに失敗しました: ${e.message}`);
   }
 
   let result;

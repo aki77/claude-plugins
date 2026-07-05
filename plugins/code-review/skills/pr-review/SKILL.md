@@ -1,7 +1,7 @@
 ---
 name: pr-review
 description: 指定されたGitHubプルリクエストに対して、複数の専門エージェント（CLAUDE.md準拠/バグ検出/REVIEW.md準拠）を並列起動して多角的なコードレビューを実施するスキル。
-allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh repo view:*), Bash(gh api:*), Bash(git rev-parse:*), Bash(git diff:*), Bash(git show:*), Bash(node:*), Bash(jq:*)
+allowed-tools: Bash(gh issue view:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh repo view:*), Bash(gh api:*), Bash(git rev-parse:*), Bash(git diff:*), Bash(git show:*), Bash(node:*), Bash(jq:*), Write
 disable-model-invocation: true
 ---
 
@@ -49,12 +49,12 @@ disable-model-invocation: true
 
 10. レビュー（サマリ + インラインコメント）を **`post-review.mjs` で一括投稿する**。GitHub REST API の `POST /pulls/{n}/reviews` を1リクエストで叩き、サマリと全インラインコメントをまとめて送信する。手順は以下:
 
-   1. 投稿内容 JSON を組み立てる。形式は `{ summaryBody, comments: [{ id, commentBody, suggestion?, deleteLines? }] }`:
+   1. 投稿内容 JSON を組み立て、**`Write` ツールで `/tmp/code-review-payload-<PR番号>.json` に書く**（前掲 review-core.md「Bash コマンドの制約」の構造化 JSON 受け渡し則に従う。`commentBody` は日本語長文、`suggestion` はコード片で `{`/`"` を含むため、heredoc・コマンドライン・stdin には**絶対に載せない**——brace+quote で拒否される）。形式は `{ summaryBody, comments: [{ id, commentBody, suggestion?, deleteLines? }] }`:
       - `comments`: **ステップ9で本文を作った confirmed かつ `resolved:true` の各 issue につき1オブジェクト**。`id` は `FINAL` の issue の `id`（= groupId）をそのまま使う。`commentBody` は文章、`suggestion` は置換後の行（string の配列、または改行区切りの1文字列。省略可）、`deleteLines` は行削除を伴う場合に消す既存行の配列（省略可）。**`params`・`path`・`line` や ```suggestion フェンスは一切書かない**（スクリプトが `id` で `FINAL` から引き、フェンスも組み立てる）。`resolved:false` の issue は `comments` に含めない（含めるとスクリプトがエラーにする。サマリ本文で言及する）。
       - `summaryBody`: レビュー全体のサマリ（課題サマリのみで構成し、「変更概要」は載せない）:
         - 課題が見つかった場合: 検出した課題の概要を記述する。confirmed だが `resolved:false`（インライン化できなかった）issue があれば、ここに該当ファイル・箇所と内容を文章で記載する。`FINAL.rejected` / `FINAL.unverified` はサマリに載せなくてよい（ターミナル表示済み）。
         - 課題が見つからなかった場合: 「問題は見つかりませんでした。バグ・プロジェクトルール（CLAUDE.md / .claude/rules/）準拠・REVIEW.md準拠を確認しました。」と記述する。
-   2. この JSON を `node ${CLAUDE_PLUGIN_ROOT}/scripts/post-review.mjs --pr <PR> --commit <headRefOid> --issues "$FINAL"` に **stdin で渡す**（`--commit` にはステップ0で取得済みの `headRefOid` を使い、レビュー対象コミットを固定する。`--issues` にはステップ7で束ねた `FINAL` のパスを渡す）。スクリプトは入力を検証（未知/重複 id・`resolved:false` の id をコメントに含めた・`resolved:true` の confirmed issue がコメントに欠落＝黙殺・`commentBody` 空はいずれもエラーで即失敗。resolved 済み issue が0件ならサマリのみ投稿を許容）してから `id` で `FINAL` の `params`/`existingCode` を結合する。`suggestion` は範囲との整合を機械検証し、**破壊的（行削除が起きるのに `deleteLines` 未明示・範囲行数不一致・統合 issue など）なら suggestion を自動で捨てて文章のみ投稿する**（エラーにはせず、コードを消さない）。REST API のフィールドへ内部変換して `event: "COMMENT"` でレビューを1リクエスト投稿し、投稿されたレビューの URL を返す。エラーで失敗した場合は入力を見直して再実行する。
+   2. ステップ10-1 で書いた投稿内容 JSON のパスを `node ${CLAUDE_PLUGIN_ROOT}/scripts/post-review.mjs --pr <PR> --commit <headRefOid> --issues "$FINAL" --infile <書いたパス>` として渡す（`--commit` にはステップ0で取得済みの `headRefOid` を使い、レビュー対象コミットを固定する。`--issues` にはステップ7で束ねた `FINAL` のパスを渡す）。スクリプトは入力を検証（未知/重複 id・`resolved:false` の id をコメントに含めた・`resolved:true` の confirmed issue がコメントに欠落＝黙殺・`commentBody` 空はいずれもエラーで即失敗。resolved 済み issue が0件ならサマリのみ投稿を許容）してから `id` で `FINAL` の `params`/`existingCode` を結合する。`suggestion` は範囲との整合を機械検証し、**破壊的（行削除が起きるのに `deleteLines` 未明示・範囲行数不一致・統合 issue など）なら suggestion を自動で捨てて文章のみ投稿する**（エラーにはせず、コードを消さない）。REST API のフィールドへ内部変換して `event: "COMMENT"` でレビューを1リクエスト投稿し、投稿されたレビューの URL を返す。エラーで失敗した場合は入力を見直して再実行する。
 
    **重要: 同一課題につき1コメントのみ投稿する。重複コメントを投稿しないこと。**
 

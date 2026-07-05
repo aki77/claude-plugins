@@ -13,7 +13,7 @@
 // 出力(stdout): ISSUES 成果物ファイルのパス（1行）。中身は
 //   { issues:[{ id, path, kind, title, body, ruleRefs, existingCode, resolved, params?, sourceFindingIds }], stats }
 import { fileURLToPath } from "node:url";
-import { fail, parseFlags, readArtifact, readStdinJson, writeArtifact } from "./lib/artifact.mjs";
+import { fail, parseFlags, readArtifact, readSingleInputJson, writeArtifact } from "./lib/artifact.mjs";
 
 // findingsDoc（FINDINGS の中身）と mergeTexts（LLM 統合文章配列）から ISSUES を組み立てる純粋関数。
 export function mergeFindings(findingsDoc, mergeTexts) {
@@ -101,10 +101,12 @@ export function mergeFindings(findingsDoc, mergeTexts) {
 
 // ---- main --------------------------------------------------------------------
 if (!process.env.NODE_TEST_CONTEXT) {
-  const { findings } = parseFlags(process.argv, {
-    flags: ["--findings"],
+  const { findings, infile } = parseFlags(process.argv, {
+    flags: ["--findings", "--infile"],
     required: ["--findings"],
-    usage: "merge-findings.mjs --findings <FINDINGS>  (統合文章 [{groupId,title,body}] を stdin で渡す)",
+    multi: ["--infile"],
+    usage:
+      "merge-findings.mjs --findings <FINDINGS> --infile <mergeTexts.json>  (統合文章 [{groupId,title,body}]。--infile 省略時は stdin)",
   });
 
   let findingsDoc;
@@ -116,9 +118,9 @@ if (!process.env.NODE_TEST_CONTEXT) {
 
   let mergeTexts;
   try {
-    mergeTexts = readStdinJson();
+    mergeTexts = readSingleInputJson(infile);
   } catch (e) {
-    fail(`stdin の JSON パースに失敗しました: ${e.message}`);
+    fail(`入力 JSON のパースに失敗しました: ${e.message}`);
   }
 
   let result;

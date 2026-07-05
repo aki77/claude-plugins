@@ -35,7 +35,7 @@
 // 出力(stdout): 投稿されたレビューの html_url。
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { fail, parseFlags, readArtifact, readStdinJson } from "./lib/artifact.mjs";
+import { fail, parseFlags, readArtifact, readSingleInputJson } from "./lib/artifact.mjs";
 import { splitAndNormalize } from "./lib/diff-anchor.mjs";
 
 // ---- ペイロード生成 ----------------------------------------------------------
@@ -207,17 +207,19 @@ export function buildPayload(input, finalDoc, { commitId }) {
 
 // ---- main --------------------------------------------------------------------
 if (!process.env.NODE_TEST_CONTEXT) {
-  const { pr, commit, issues } = parseFlags(process.argv, {
-    flags: ["--pr", "--commit", "--issues"],
+  const { pr, commit, issues, infile } = parseFlags(process.argv, {
+    flags: ["--pr", "--commit", "--issues", "--infile"],
     required: ["--pr", "--commit", "--issues"],
-    usage: "post-review.mjs --pr <PR> --commit <sha> --issues <FINAL>  (投稿内容 JSON を stdin で渡す)",
+    multi: ["--infile"],
+    usage:
+      "post-review.mjs --pr <PR> --commit <sha> --issues <FINAL> --infile <payload.json>  (投稿内容 JSON。--infile 省略時は stdin)",
   });
 
   let input;
   try {
-    input = readStdinJson();
+    input = readSingleInputJson(infile);
   } catch (e) {
-    fail(`stdin の JSON パースに失敗しました: ${e.message}`);
+    fail(`入力 JSON のパースに失敗しました: ${e.message}`);
   }
 
   let finalDoc;

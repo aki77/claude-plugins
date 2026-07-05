@@ -24,7 +24,7 @@
 //   { findings[], groups[], stats:{total, valid, invalid, outOfScope, resolved, unresolved, groups, multiGroups} }
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { fail, parseFlags, readArtifact, readStdinJson, writeArtifact } from "./lib/artifact.mjs";
+import { fail, parseFlags, readArtifact, readInputJsonList, writeArtifact } from "./lib/artifact.mjs";
 import { buildDiffArgs, parseDiff, resolveAnchor, splitAndNormalize } from "./lib/diff-anchor.mjs";
 
 // ---- スキーマ検証 ------------------------------------------------------------
@@ -308,17 +308,26 @@ export function processFindings(rawInput, { ctx, diffText, prev = null }) {
 
 // ---- main --------------------------------------------------------------------
 if (!process.env.NODE_TEST_CONTEXT) {
-  const { context, retry } = parseFlags(process.argv, {
-    flags: ["--context", "--retry"],
+  const { context, retry, infile } = parseFlags(process.argv, {
+    flags: ["--context", "--retry", "--infile"],
     required: ["--context"],
-    usage: "process-findings.mjs --context <CTX> [--retry <前回FINDINGS>]  (finding 配列 JSON を stdin で渡す)",
+    multi: ["--infile"],
+    usage:
+      "process-findings.mjs --context <CTX> [--retry <前回FINDINGS>] --infile <a.json> [--infile <b.json> ...]  (--infile 省略時は stdin)",
   });
 
+  // 入力の階層を processFindings が期待する形に均す。
+  //   初回の --infile 集約時のみ「配列の配列（各エージェントの finding 配列を要素とする
+  //     配列）」を渡し、processFindings が1段フラット化する（readInputJsonList の戻り
+  //     [[f...],[f...]] がまさにその形）。
+  //   それ以外は単一 JSON を渡す: --retry は単一パッチ配列 [{id, existingCode}]、
+  //     stdin fallback は「配列の配列」1本が [stdin値] に包まれるので、いずれも先頭を取る。
   let rawInput;
   try {
-    rawInput = readStdinJson();
+    const inputs = readInputJsonList(infile);
+    rawInput = infile && !retry ? inputs : inputs[0];
   } catch (e) {
-    fail(`stdin の JSON パースに失敗しました: ${e.message}`);
+    fail(`入力 JSON のパースに失敗しました: ${e.message}`);
   }
 
   let ctx;
