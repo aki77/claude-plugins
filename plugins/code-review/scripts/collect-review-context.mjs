@@ -33,6 +33,42 @@ const DEFAULT_EXCLUDE_GLOBS = [
   "**/*.{mp4,mov,webm,avi,mkv,mp3,wav,flac,ogg}",
 ];
 
+// ---- 変更規模 tier のしきい値 ------------------------------------------------
+// 小さい差分では固定コスト（サマリ+クラスタ分割エージェント・ルール準拠2体目・
+// クラスタ整合性2体目以降・バグ検出）を削るため、変更規模を tier で分類する。
+// 判定はここ（決定論・コード側）で確定させ、CTX の tier としてプロンプトへ渡す
+// （プロンプトは規模判定ロジックを一切持たず tier の値を読むだけ）。
+// totalFiles / totalChangedLines はいずれも「レビュー対象（kept）ファイル」基準。
+// 環境変数で上書き可能（利用リポジトリごとにプロンプト改変なしで調整できる）。
+const num = (v, fallback) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
+const TIER_THRESHOLDS = {
+  tiny: {
+    maxFiles: num(process.env.CODE_REVIEW_TINY_MAX_FILES, 2),
+    maxLines: num(process.env.CODE_REVIEW_TINY_MAX_LINES, 50),
+  },
+  small: {
+    maxFiles: num(process.env.CODE_REVIEW_SMALL_MAX_FILES, 5),
+    maxLines: num(process.env.CODE_REVIEW_SMALL_MAX_LINES, 150),
+  },
+};
+
+// 変更規模から tier（"tiny" | "small" | "normal"）を決める純粋関数。
+// tiny/small はいずれも「ファイル数 AND 行数」の両方がしきい値未満のときのみ該当し、
+// どちらか一方でも超えたら上位 tier（最終的に normal）へ繰り上がる。
+function classifyTier(totalFiles, totalChangedLines) {
+  const { tiny, small } = TIER_THRESHOLDS;
+  if (totalFiles <= tiny.maxFiles && totalChangedLines < tiny.maxLines) {
+    return "tiny";
+  }
+  if (totalFiles <= small.maxFiles && totalChangedLines < small.maxLines) {
+    return "small";
+  }
+  return "normal";
+}
+
 // ---- 引数パース --------------------------------------------------------------
 // --pr <PR>      : GitHub PR の変更ファイルを対象にする
 // --range [<r>]  : ローカル git range の変更ファイルを対象にする（省略時は自動解決）
@@ -121,6 +157,51 @@ function getStagedFiles() {
     encoding: "utf8",
   });
   return splitLines(out);
+}
+
+// `git diff --numstat` の生出力を [{ added, deleted, path }] にパースする純粋関数。
+// numstat の各行は `added<TAB>deleted<TAB>path`。バイナリファイルは added/deleted が
+// `-` になるため数値化できず、行数集計から除外する（null で表現）。
+// rename は `old => new` 形式や `{a => b}` 形式になるが、path 自体は tier 判定では
+// kept セットとの照合に使わない（集計は行数のみ）ため、パスの厳密復元は不要。
+function parseNumstat(out) {
+  const rows = [];
+  for (const line of out.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split("\t");
+    if (parts.length < 3) continue;
+    const added = parts[0] === "-" ? null : Number(parts[0]);
+    const deleted = parts[1] === "-" ? null : Number(parts[1]);
+    rows.push({ added, deleted, path: parts.slice(2).join("\t") });
+  }
+  return rows;
+}
+
+// レビュー対象（kept）ファイルの変更「行数」を算出する。
+// diffArgs（range or --staged）と excludeArgs.git（生成物・バイナリの除外 pathspec）を
+// 本 diff とまったく同じ引数で numstat に渡すことで、tier 判定が本 diff とズレないようにする。
+// numstat はパスを復元しない（tier 判定に使うのは行数だけ。ファイル数は changedFiles が正）ため
+// core.quotepath は不要。バイナリ行（added/deleted が null）は行数集計に含めない。
+function collectChangedLines(diffArgs, excludeArgs) {
+  const args = ["diff", "--numstat", "--find-renames", ...diffArgs, ...excludeArgs];
+  let out;
+  try {
+    out = execFileSync("git", args, {
+      encoding: "utf8",
+      maxBuffer: 256 * 1024 * 1024,
+    });
+  } catch {
+    // numstat の取得に失敗しても tier 判定を落とさない（normal 相当＝全エージェント起動）。
+    return { totalAdded: 0, totalDeleted: 0, totalChangedLines: 0 };
+  }
+  let totalAdded = 0;
+  let totalDeleted = 0;
+  for (const r of parseNumstat(out)) {
+    if (r.added != null) totalAdded += r.added;
+    if (r.deleted != null) totalDeleted += r.deleted;
+  }
+  return { totalAdded, totalDeleted, totalChangedLines: totalAdded + totalDeleted };
 }
 
 function splitLines(out) {
@@ -401,7 +482,7 @@ function rulesForFile(file, allRules) {
 //   2. 自分のルールセットがバケットのルール和集合の部分集合になっているグループ（=どちらに
 //      入れても余分なルールを読まない）は、ファイル数が少ないバケットへ自由に振り分けて
 //      均等化する。これにより「コンテキスト重複ゼロ」を保ったままファイル数を平準化できる。
-function buildAssignments(changedFiles, allRules, resolveRules = rulesForFile) {
+function buildAssignments(changedFiles, allRules, resolveRules = rulesForFile, tier = "normal") {
   // ファイル → 適用ルールセット（グループ化）
   const groupsByKey = new Map();
   for (const file of changedFiles) {
@@ -430,7 +511,14 @@ function buildAssignments(changedFiles, allRules, resolveRules = rulesForFile) {
     for (const r of group.ruleSet) bucket.ruleUnion.add(r);
   };
 
-  if (groups.length === 1) {
+  if (tier !== "normal") {
+    // fast-path（tiny/small）: ルール準拠チェックを1エージェントに寄せる。
+    // 全グループのファイルを buckets[0] に集約し buckets[1] を空にする
+    // （→ review-core の「assignments[1].files が空ならエージェント2を起動しない」条件が
+    //   自動的に成立し、プロンプト側の変更なしにエージェント2起動が抑止される）。
+    // tiny/small は総ファイル数がしきい値以内（small で最大5）なので1体が読むルール量も限定的。
+    for (const g of groups) place(buckets[0], g, g.files);
+  } else if (groups.length === 1) {
     // 縮退ケース: グループが1つだけなら、その単一グループを2バケットへ均等割りする
     // （同一ルールセットなのでコンテキスト重複は発生しない）。
     const only = groups[0];
@@ -519,7 +607,21 @@ if (!process.env.NODE_TEST_CONTEXT) {
   });
 
   const rules = await collectRules(changedFiles);
-  const assignments = buildAssignments(changedFiles, rules);
+
+  // 変更規模メトリクスと tier を算出する（本 diff と同じ diffArgs + 除外 pathspec で numstat）。
+  // これらの引数は下の output.diffArgs / excludeArgs.git と同一構築（ズレると tier 判定が歪む）。
+  const diffArgs = range ? [range] : ["--staged"];
+  const excludeArgs = buildExcludeArgs(excludedFiles);
+  // ファイル数は kept を正とする changedFiles.length、行数は numstat から得る。
+  const metrics = {
+    totalFiles: changedFiles.length,
+    ...collectChangedLines(diffArgs, excludeArgs.git),
+  };
+  const tier = classifyTier(metrics.totalFiles, metrics.totalChangedLines);
+
+  // tier に応じてルール準拠エージェントの割り当てを縮退させる
+  // （tiny/small は buckets[1] を空にして2体目の起動を抑止する）。
+  const assignments = buildAssignments(changedFiles, rules, undefined, tier);
 
   // source は全モードで出力する。PR モードもローカル range に統一されたため、diffArgs /
   // range を持つ（PR は `<baseRefOid>...HEAD`、staged は `--staged`）。
@@ -529,10 +631,13 @@ if (!process.env.NODE_TEST_CONTEXT) {
     changedFiles,
     excludedFiles,
     // 各 diff 取得コマンド向けの除外引数（SKILL 側は jq で取り出して連結するだけ）。
-    excludeArgs: buildExcludeArgs(excludedFiles),
+    excludeArgs,
     assignments,
+    // 変更規模と tier（プロンプトはこの tier を jq で読み、起動エージェント数を決める）。
+    metrics,
+    tier,
     // diffArgs は後続の `git diff <diffArgs>` 用引数（全モードで SKILL 側の差分取得を一様化）。
-    diffArgs: range ? [range] : ["--staged"],
+    diffArgs,
   };
   // range は PR モードと range モードで存在する（staged モードでは存在しない）。
   if (range) output.range = range;
@@ -668,6 +773,74 @@ if (process.env.NODE_TEST_CONTEXT) {
     const a = build(["models/user.rb"]);
     const file = a.flatMap((b) => b.files).find((f) => f.path === "models/user.rb");
     assert.deepEqual(file.rules.sort(), ["CLAUDE.md", "app-models", "comment"].sort());
+  });
+
+  // ---- tier（変更規模）と fast-path 縮退 ----
+  const buildTier = (files, tier) =>
+    buildAssignments(files, [], fakeResolve, tier);
+
+  test("classifyTier: tiny はファイル数 AND 行数の両方がしきい値未満", () => {
+    assert.equal(classifyTier(2, 33), "tiny"); // PR #813 相当（2ファイル33行）
+    assert.equal(classifyTier(1, 49), "tiny");
+    assert.equal(classifyTier(2, 49), "tiny");
+  });
+
+  test("classifyTier: 一方でも超えたら tiny に該当しない", () => {
+    assert.equal(classifyTier(3, 33), "small"); // ファイル数超過
+    assert.equal(classifyTier(2, 50), "small"); // 行数超過（境界は < なので 50 は tiny 外）
+  });
+
+  test("classifyTier: small はファイル数 AND 行数の両方がしきい値未満", () => {
+    assert.equal(classifyTier(5, 149), "small");
+    assert.equal(classifyTier(3, 100), "small");
+  });
+
+  test("classifyTier: しきい値を超えたら normal", () => {
+    assert.equal(classifyTier(6, 100), "normal"); // ファイル数超過
+    assert.equal(classifyTier(5, 150), "normal"); // 行数超過
+    assert.equal(classifyTier(20, 500), "normal");
+  });
+
+  test("buildAssignments: tiny は全ファイルを buckets[0] に寄せて buckets[1] を空にする", () => {
+    // normal なら [2,2] になる4ファイル単一グループが、tiny では [4,0] に縮退する。
+    const a = buildTier(["a.txt", "b.txt", "c.txt", "d.txt"], "tiny");
+    assert.deepEqual(fileCounts(a), [4, 0]);
+  });
+
+  test("buildAssignments: small も複数グループを buckets[0] に集約する", () => {
+    // normal なら骨格/filler で2バケットに割れる構成でも small は1バケットに寄る。
+    const files = ["models/m0.rb", "migrate/g0.rb", "docs/d0.md"];
+    const a = buildTier(files, "small");
+    assert.equal(a[1].files.length, 0);
+    assert.equal(a[0].files.length, 3);
+  });
+
+  test("buildAssignments: normal は従来どおり2バケットへ分割（後方互換）", () => {
+    const a = buildTier(["a.txt", "b.txt", "c.txt", "d.txt"], "normal");
+    assert.deepEqual(fileCounts(a), [2, 2]);
+  });
+
+  test("parseNumstat: added/deleted/path をパースし合計行数を出せる", () => {
+    const out = "10\t5\tsrc/a.ts\n2\t0\tspec/b.rb\n";
+    const rows = parseNumstat(out);
+    assert.equal(rows.length, 2);
+    const total = rows.reduce((s, r) => s + r.added + r.deleted, 0);
+    assert.equal(total, 17);
+  });
+
+  test("parseNumstat: バイナリ行（- -）は added/deleted が null", () => {
+    const out = "-\t-\tassets/logo.png\n3\t1\tsrc/a.ts\n";
+    const rows = parseNumstat(out);
+    assert.equal(rows[0].added, null);
+    assert.equal(rows[0].deleted, null);
+    assert.equal(rows[1].added, 3);
+  });
+
+  test("parseNumstat: 空行・不正行はスキップする", () => {
+    const out = "\n5\t5\tsrc/a.ts\ngarbage\n";
+    const rows = parseNumstat(out);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].path, "src/a.ts");
   });
 
   test("classifyFiles: デフォルト glob（ミニファイ/生成物/バイナリ）を除外する", () => {

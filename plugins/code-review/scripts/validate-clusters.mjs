@@ -23,6 +23,19 @@ function singleCluster(changedFiles) {
   return [{ id: 1, theme: "全変更ファイル", changedFiles: [...changedFiles], symbols: [], contextHints: [] }];
 }
 
+// tier（tiny/small）による決定論的な単一クラスタ縮退の結果を作る純粋関数。
+// エージェント2の出力内容によらず縮退させるため clusters のパース前に使う。
+// fallback（rawClusters が壊れていた縮退）とは区別し tierReduced:true で理由を残す。
+export function tierReducedClusters(changedFiles) {
+  return {
+    clusters: singleCluster(changedFiles),
+    fallback: false,
+    tierReduced: true,
+    removedPaths: [],
+    appendedPaths: [],
+  };
+}
+
 // clusters を検証・修復する純粋関数。
 //   changedFiles: CTX の変更ファイル配列（レビュー対象。除外済み）
 //   rawClusters : ステップ2エージェントの出力（任意の型でありうる）
@@ -133,15 +146,23 @@ if (!process.env.NODE_TEST_CONTEXT) {
   }
   const changedFiles = ctx.changedFiles ?? [];
 
-  // 入力が JSON でない/読めない場合も縮退で吸収する（サマリエージェント失敗時の縮退経路一本化）。
-  let rawClusters;
-  try {
-    rawClusters = readSingleInputJson(infile);
-  } catch {
-    rawClusters = null; // → validateClusters が単一クラスタへ縮退させる
+  // fast-path（tiny/small）: 変更規模が小さいときはクラスタ分割を行わず単一クラスタへ
+  // 決定論的に縮退させる（→ エージェント4が1インスタンスになる）。エージェント2の出力
+  // 内容によらず縮退させるため、clusters をパースする前にここで確定させる。
+  // fallback（rawClusters が使い物にならなかった縮退）とは区別し tierReduced で理由を残す。
+  let result;
+  if (ctx.tier && ctx.tier !== "normal") {
+    result = tierReducedClusters(changedFiles);
+  } else {
+    // 入力が JSON でない/読めない場合も縮退で吸収する（サマリエージェント失敗時の縮退経路一本化）。
+    let rawClusters;
+    try {
+      rawClusters = readSingleInputJson(infile);
+    } catch {
+      rawClusters = null; // → validateClusters が単一クラスタへ縮退させる
+    }
+    result = validateClusters(rawClusters, changedFiles);
   }
-
-  const result = validateClusters(rawClusters, changedFiles);
   console.log(writeArtifact("clusters", result));
 }
 
@@ -238,5 +259,15 @@ if (
     const r = validateClusters(raw, changed);
     assert.deepEqual(r.clusters[0].changedFiles, ["a.js", "b.js"]);
     assert.deepEqual(r.clusters[1].changedFiles, ["c.js", "d.js"]); // b.js は落ちる
+  });
+
+  test("tierReducedClusters: 全変更ファイルを単一クラスタにまとめ tierReduced を立てる", () => {
+    const r = tierReducedClusters(changed);
+    assert.equal(r.tierReduced, true);
+    assert.equal(r.fallback, false); // fallback（壊れた入力）とは区別する
+    assert.equal(r.clusters.length, 1);
+    assert.deepEqual(r.clusters[0].changedFiles, changed);
+    assert.deepEqual(r.removedPaths, []);
+    assert.deepEqual(r.appendedPaths, []);
   });
 }
