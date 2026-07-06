@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { extractLatestSegment, parseTranscriptLines } from "./transcript-segment.mjs";
+import { extractLatestSegment, isSegmentStale, parseTranscriptLines } from "./transcript-segment.mjs";
 
 const MIN_OUTPUT_CHARS = 20;
 // hooks.json の timeout(200s) より少し下げ、kill される前にログ・exit できる余地を残す
@@ -15,6 +15,9 @@ const MAX_SEGMENT_CHARS = 2_000_000;
 const MAX_CONTEXT_CHARS = 20_000;
 // 要約品質を優先してデフォルトは sonnet とする（却下理由・制約の判別は haiku では精度が落ちやすいため）。
 const DEFAULT_MODEL = "sonnet";
+// compact_boundary 行の書き込みが SessionStart(compact) フックの起動に間に合わないレースを
+// 吸収するためのリトライ間隔(ms)。合計待機は高々2.5秒程度で、200秒のtimeoutに対して無視できるコスト。
+const STALE_RETRY_DELAYS_MS = [500, 500, 500, 500, 500];
 
 // 差分区間が大きすぎる場合、古い側を切り詰めて上限内に収める。
 export function truncateSegment(segmentText) {
@@ -133,6 +136,62 @@ export function createLogger(env = {}) {
   };
 }
 
+// 「最後に処理した compact_boundary の uuid」の永続化先を決める。
+// CLAUDE_PLUGIN_DATA（プラグイン専用の永続データディレクトリ）優先、未設定なら temp ディレクトリにフォールバック。
+export function resolveStatePath(sessionId, env = {}) {
+  const dir = env.CLAUDE_PLUGIN_DATA && env.CLAUDE_PLUGIN_DATA.trim()
+    ? env.CLAUDE_PLUGIN_DATA.trim()
+    : path.join(os.tmpdir(), "compact-handoff-state");
+  return path.join(dir, `${sessionId}.json`);
+}
+
+// 前回このフックが処理し終えた compact_boundary の uuid を読む。無ければ null（fail-safe）。
+export function readLastProcessedUuid(statePath) {
+  try {
+    return JSON.parse(fs.readFileSync(statePath, "utf-8"))?.lastProcessedUuid ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// 今回処理し終えた compact_boundary の uuid を保存する。書き込み失敗は無視
+// （次回また同じ境界を処理し直すだけで実害は小さいため、フック本体を止めない）。
+export function writeLastProcessedUuid(statePath, uuid) {
+  try {
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(statePath, JSON.stringify({ lastProcessedUuid: uuid }));
+  } catch {
+    // 無視
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// transcript を読み直して最新の差分区間を取得する。
+function readSegment(transcriptPath) {
+  const transcriptText = fs.readFileSync(transcriptPath, "utf-8");
+  return extractLatestSegment(parseTranscriptLines(transcriptText));
+}
+
+// compact_boundary 行の書き込みが SessionStart フックの起動に間に合わないレースを吸収するため、
+// 「最新境界が前回処理済みのuuidと同じ（＝新しい境界がまだ来ていない）」間は短いリトライを行う。
+// retryDelaysMs はテストで短縮できるよう引数化している（既定は本番用の STALE_RETRY_DELAYS_MS）。
+export async function readFreshSegment(transcriptPath, lastProcessedUuid, log, retryDelaysMs = STALE_RETRY_DELAYS_MS) {
+  let segment = readSegment(transcriptPath);
+  for (let attempt = 0; isSegmentStale(segment, lastProcessedUuid); attempt++) {
+    if (attempt >= retryDelaysMs.length) {
+      log(`[4] still stale after ${attempt} retries, giving up`);
+      return null;
+    }
+    log(`[4] compact_boundary not fresh yet, retrying in ${retryDelaysMs[attempt]}ms (attempt ${attempt + 1})`);
+    await sleep(retryDelaysMs[attempt]);
+    segment = readSegment(transcriptPath);
+  }
+  return segment;
+}
+
 export function readStdin() {
   return new Promise((resolve) => {
     let data = "";
@@ -167,18 +226,24 @@ async function main() {
     process.exit(0);
   }
 
-  let transcriptText;
+  if (!sessionId) {
+    log("[2] session_id missing");
+    process.exit(0);
+  }
+
+  const statePath = resolveStatePath(sessionId, process.env);
+  const lastProcessedUuid = readLastProcessedUuid(statePath);
+  log(`[3] statePath=${statePath} lastProcessedUuid=${lastProcessedUuid ?? "none"}`);
+
+  let segment;
   try {
-    transcriptText = fs.readFileSync(transcriptPath, "utf-8");
+    segment = await readFreshSegment(transcriptPath, lastProcessedUuid, log);
   } catch {
     log(`[3] failed to read transcript: ${transcriptPath}`);
     process.exit(0);
   }
-
-  const parsedLines = parseTranscriptLines(transcriptText);
-  const segment = extractLatestSegment(parsedLines);
   if (!segment) {
-    log("[4] no compact_boundary found, nothing to do");
+    log("[4] no fresh compact_boundary found, nothing to do");
     process.exit(0);
   }
   log(
@@ -186,6 +251,7 @@ async function main() {
   );
   if (segment.isEmpty) {
     log("[4] segment is empty, nothing to summarize");
+    writeLastProcessedUuid(statePath, segment.latestBoundary.obj.uuid);
     process.exit(0);
   }
 
@@ -217,10 +283,12 @@ async function main() {
 
   if (!isValidOutput(cleaned, exitCode)) {
     log("[6] output invalid or no gap content, nothing injected");
+    writeLastProcessedUuid(statePath, segment.latestBoundary.obj.uuid);
     process.exit(0);
   }
   if (cleaned.trim() === "(NO_GAP_CONTENT)") {
     log("[6] no gap content, nothing injected");
+    writeLastProcessedUuid(statePath, segment.latestBoundary.obj.uuid);
     process.exit(0);
   }
 
@@ -233,6 +301,7 @@ async function main() {
       },
     })
   );
+  writeLastProcessedUuid(statePath, segment.latestBoundary.obj.uuid);
   log(`[7] injected additionalContext: ${additionalContext.length} chars`);
   log(`=== SessionStart(compact) hook finished: ${new Date().toISOString()} ===`);
   process.exit(0);
@@ -368,5 +437,70 @@ if (
       resolveDebugLogPath({ COMPACT_HANDOFF_DEBUG: "1", COMPACT_HANDOFF_DEBUG_FILE: "/var/log/h.log" }),
       "/var/log/h.log"
     );
+  });
+
+  test("resolveStatePath: CLAUDE_PLUGIN_DATA 指定時はその配下", () => {
+    const p = resolveStatePath("session-1", { CLAUDE_PLUGIN_DATA: "/data/plugin" });
+    assert.equal(p, path.join("/data/plugin", "session-1.json"));
+  });
+
+  test("resolveStatePath: 未設定時は temp ディレクトリにフォールバック", () => {
+    const p = resolveStatePath("session-1", {});
+    assert.ok(p.startsWith(os.tmpdir()));
+    assert.ok(p.endsWith(path.join("compact-handoff-state", "session-1.json")));
+  });
+
+  test("readLastProcessedUuid: ファイル不在時は null", () => {
+    const p = path.join(os.tmpdir(), `compact-handoff-test-missing-${process.pid}.json`);
+    assert.equal(readLastProcessedUuid(p), null);
+  });
+
+  test("writeLastProcessedUuid/readLastProcessedUuid: 書いて読み直すラウンドトリップ", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "compact-handoff-test-"));
+    const p = path.join(dir, "nested", "session-1.json");
+    writeLastProcessedUuid(p, "uuid-abc");
+    assert.equal(readLastProcessedUuid(p), "uuid-abc");
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("readFreshSegment: 過去境界のuuidと同じ場合はリトライを尽くしてnullを返す(過去境界の誤再処理防止)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "compact-handoff-test-"));
+    const transcriptPath = path.join(dir, "transcript.jsonl");
+    const boundaryLine = JSON.stringify({
+      type: "system",
+      subtype: "compact_boundary",
+      uuid: "uuid-1",
+    });
+    fs.writeFileSync(
+      transcriptPath,
+      [JSON.stringify({ type: "user", message: { role: "user", content: "a" } }), boundaryLine].join("\n")
+    );
+
+    const logs = [];
+    const segment = await readFreshSegment(transcriptPath, "uuid-1", (msg) => logs.push(msg), [1, 1]);
+
+    assert.equal(segment, null);
+    assert.ok(logs.some((msg) => msg.includes("giving up")));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("readFreshSegment: 新しいuuidの境界が見つかれば即座に返す", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "compact-handoff-test-"));
+    const transcriptPath = path.join(dir, "transcript.jsonl");
+    const boundaryLine = JSON.stringify({
+      type: "system",
+      subtype: "compact_boundary",
+      uuid: "uuid-2",
+    });
+    fs.writeFileSync(
+      transcriptPath,
+      [JSON.stringify({ type: "user", message: { role: "user", content: "a" } }), boundaryLine].join("\n")
+    );
+
+    const segment = await readFreshSegment(transcriptPath, "uuid-1", () => {});
+
+    assert.ok(segment);
+    assert.equal(segment.latestBoundary.obj.uuid, "uuid-2");
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 }

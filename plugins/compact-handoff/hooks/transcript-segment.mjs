@@ -48,6 +48,13 @@ export function extractLatestSegment(parsedLines) {
   };
 }
 
+// 最新境界のuuidが lastProcessedUuid と同じ（または境界自体が無い）なら、
+// 「今回の SessionStart に対応する新しい境界がまだ書き込まれていない」とみなす。
+export function isSegmentStale(segment, lastProcessedUuid) {
+  if (!segment) return true;
+  return segment.latestBoundary.obj.uuid === lastProcessedUuid;
+}
+
 // ---- インラインテスト --------------------------------------------------------
 if (
   process.env.NODE_TEST_CONTEXT &&
@@ -146,5 +153,33 @@ if (
     const result = extractLatestSegment(parsed);
     assert.equal(result.isEmpty, false);
     assert.equal(result.segmentText, userMsg("a"));
+  });
+
+  const boundaryWithUuid = (uuid) =>
+    line({ type: "system", subtype: "compact_boundary", uuid });
+
+  test("isSegmentStale: segmentがnull(境界なし)ならstale", () => {
+    assert.equal(isSegmentStale(null, "uuid-1"), true);
+  });
+
+  test("isSegmentStale: 最新境界のuuidがlastProcessedUuidと同じならstale", () => {
+    const raw = [userMsg("a"), boundaryWithUuid("uuid-1")].join("\n");
+    const parsed = parseTranscriptLines(raw);
+    const segment = extractLatestSegment(parsed);
+    assert.equal(isSegmentStale(segment, "uuid-1"), true);
+  });
+
+  test("isSegmentStale: 最新境界のuuidがlastProcessedUuidと異なればstaleでない", () => {
+    const raw = [userMsg("a"), boundaryWithUuid("uuid-2")].join("\n");
+    const parsed = parseTranscriptLines(raw);
+    const segment = extractLatestSegment(parsed);
+    assert.equal(isSegmentStale(segment, "uuid-1"), false);
+  });
+
+  test("isSegmentStale: lastProcessedUuidがnull(未処理)なら常にstaleでない", () => {
+    const raw = [userMsg("a"), boundaryWithUuid("uuid-1")].join("\n");
+    const parsed = parseTranscriptLines(raw);
+    const segment = extractLatestSegment(parsed);
+    assert.equal(isSegmentStale(segment, null), false);
   });
 }
