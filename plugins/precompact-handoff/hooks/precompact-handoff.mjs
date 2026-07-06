@@ -32,7 +32,9 @@ export function buildPrompt(existingHandoff, transcriptPath) {
   const outputRules = `出力に関する重要なルール:
 - 出力の1行目は必ず「# HANDOFF」で始めること。前置きは書かない。
 - 出力全体をコードブロック（\`\`\`markdown や \`\`\`）で囲まないこと。
-- Markdown本文の前後に説明文を追加しないこと。`;
+- Markdown本文の前後に説明文を追加しないこと。
+- 出力言語は、トランスクリプト内でユーザーが使っている言語に合わせること（要約者自身の設定言語ではない）。
+- 簡潔に書くこと。`;
 
   const intro = `重要: あなたは読み取り専用の要約者です。コードの実行・コマンドの実行・ファイルの書き込みは一切行わないこと。読んで要約するだけです。`;
 
@@ -71,9 +73,7 @@ ${format}`;
 
   return `${intro}
 
-${body}
-
-会話と同じ言語で書くこと。簡潔に。`;
+${body}`;
 }
 
 // claude -p に渡す --allowedTools の値を組み立てる。
@@ -267,6 +267,11 @@ if (
   test("buildPrompt: どちらのモードもコードブロック禁止を明示する", () => {
     assert.ok(buildPrompt("", "/x").includes("コードブロック（"));
     assert.ok(buildPrompt("prev", "/x").includes("コードブロック（"));
+  });
+
+  test("buildPrompt: どちらのモードもトランスクリプトの言語に合わせる指示を含む", () => {
+    assert.ok(buildPrompt("", "/x").includes("トランスクリプト内でユーザーが使っている言語"));
+    assert.ok(buildPrompt("prev", "/x").includes("トランスクリプト内でユーザーが使っている言語"));
   });
 
   test("buildAllowedToolsArg: 絶対パスを Read(//path) 形式に変換する", () => {
