@@ -1,4 +1,4 @@
-# precompact-handoff
+# compact-handoff
 
 コンテキスト圧縮（コンパクション）直後に発火する **SessionStart(compact) フック**1つで、圧縮で捨てられた生の会話ログの差分区間を読み直し、`claude -p`（CLI プリントモード）に「Claude Code 標準の圧縮要約では拾いきれない観点」だけを抽出させ、`additionalContext` として会話に強制的に注入するプラグインです。
 
@@ -30,7 +30,7 @@ Claude Code は圧縮時に「何をしたか・現在の作業・次のステ�
 
 ```
 /plugin marketplace add aki77/claude-plugins
-/plugin install precompact-handoff@plugin-hub
+/plugin install compact-handoff@plugin-hub
 ```
 
 ## 前提
@@ -42,20 +42,20 @@ Claude Code は圧縮時に「何をしたか・現在の作業・次のステ�
 
 | 変数 | 既定 | 説明 |
 | --- | --- | --- |
-| `PRECOMPACT_HANDOFF_DEBUG` | 未設定（ログ無効） | 真の値を設定するとステップログを出力する |
-| `PRECOMPACT_HANDOFF_DEBUG_FILE` | OS の temp ディレクトリ | デバッグログの出力先。既定は `<tmpdir>/precompact-handoff-debug.log`（プロジェクトを汚さない） |
-| `PRECOMPACT_HANDOFF_MODEL` | `sonnet` | `claude -p` に渡すモデル（`sonnet` / `haiku` / `opus` など） |
+| `COMPACT_HANDOFF_DEBUG` | 未設定（ログ無効） | 真の値を設定するとステップログを出力する |
+| `COMPACT_HANDOFF_DEBUG_FILE` | OS の temp ディレクトリ | デバッグログの出力先。既定は `<tmpdir>/compact-handoff-debug.log`（プロジェクトを汚さない） |
+| `COMPACT_HANDOFF_MODEL` | `sonnet` | `claude -p` に渡すモデル（`sonnet` / `haiku` / `opus` など） |
 
 ## 動作確認
 
-プロジェクトで Claude Code を起動し、数回やりとりしてから `/compact` を実行します。ファイルは生成されないため、直接の確認手段は `PRECOMPACT_HANDOFF_DEBUG=1` を設定した状態でのログ確認になります。続けて何かメッセージを送ると、抽出結果があれば SessionStart(compact) フックが `additionalContext` として注入します（該当情報が無ければ何も注入されません）。手動の `/compact` でも自動圧縮でも動きます。
+プロジェクトで Claude Code を起動し、数回やりとりしてから `/compact` を実行します。ファイルは生成されないため、直接の確認手段は `COMPACT_HANDOFF_DEBUG=1` を設定した状態でのログ確認になります。続けて何かメッセージを送ると、抽出結果があれば SessionStart(compact) フックが `additionalContext` として注入します（該当情報が無ければ何も注入されません）。手動の `/compact` でも自動圧縮でも動きます。
 
-うまく動かないときは `PRECOMPACT_HANDOFF_DEBUG=1` を設定して再現し、`<tmpdir>/precompact-handoff-debug.log` のステップログを確認してください。
+うまく動かないときは `COMPACT_HANDOFF_DEBUG=1` を設定して再現し、`<tmpdir>/compact-handoff-debug.log` のステップログを確認してください。
 
 ## 既知の制限
 
 - 会話が長いほど（差分区間が大きいほど）要約に時間がかかります。この呼び出しはユーザーの次ターン開始をブロックするため、フックの `timeout` は 200 秒に設定しています。差分区間が異常に大きい場合は古い側を切り詰めて上限（2MB）内に収めます。
-- 抽出結果の品質は要約に使うモデルに依存します。既定では品質を優先して `sonnet` を使用しますが、`PRECOMPACT_HANDOFF_MODEL` で変更できます。
+- 抽出結果の品質は要約に使うモデルに依存します。既定では品質を優先して `sonnet` を使用しますが、`COMPACT_HANDOFF_MODEL` で変更できます。
 - 複数回 `/compact` されるセッションでは、各 SessionStart(compact) は直前の圧縮からの差分区間のみを対象にします。これは、前回注入した `additionalContext` がそれ以降の会話コンテキストに残り続け、後続の標準要約にも反映される、という前提に立っています。この前提は未検証であり、想定と異なる場合は2回目以降の圧縮で以前のギャップ情報が引き継がれない可能性があります。
 - `additionalContext` には長さの上限があり、極端に長い抽出結果は末尾が切り詰められて注入されます。
 - `hooks.json` はセッション起動時に読み込まれるため、プラグインをアップデートしても実行中のセッションには反映されません。反映するには Claude Code を再起動してください。

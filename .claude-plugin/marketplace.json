@@ -41,8 +41,8 @@
       "description": "Stop hook that moves plan files older than 30 days (by mtime) into an archived/ subdirectory, resolving the plans directory from the transcript's planFilePath and prefixing each filename with its last-modified timestamp (YYYY-MM-DD_HHMM)"
     },
     {
-      "name": "precompact-handoff",
-      "source": "./plugins/precompact-handoff",
+      "name": "compact-handoff",
+      "source": "./plugins/compact-handoff",
       "description": "SessionStart(compact) hook that extracts the raw log segment dropped by compaction and has `claude -p` summarize only the gaps the standard compaction summary tends to miss (rejected alternatives, unexecuted commitments, constraints), injecting the result as additionalContext"
     }
   ]

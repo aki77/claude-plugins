@@ -99,25 +99,25 @@ ${truncated}
 }
 
 // claude -p に渡すモデルを決める。
-// PRECOMPACT_HANDOFF_MODEL が指定されていればそれを優先、未指定なら DEFAULT_MODEL。
+// COMPACT_HANDOFF_MODEL が指定されていればそれを優先、未指定なら DEFAULT_MODEL。
 export function resolveModel(env = {}) {
-  const override = env.PRECOMPACT_HANDOFF_MODEL;
+  const override = env.COMPACT_HANDOFF_MODEL;
   if (override && override.trim()) {
     return override.trim();
   }
   return DEFAULT_MODEL;
 }
 
-// デバッグログの書き出し先を決める。既定（PRECOMPACT_HANDOFF_DEBUG 未設定）は null＝ログ無効。
-// 有効時は PRECOMPACT_HANDOFF_DEBUG_FILE、無指定なら OS の temp ディレクトリに書く
+// デバッグログの書き出し先を決める。既定（COMPACT_HANDOFF_DEBUG 未設定）は null＝ログ無効。
+// 有効時は COMPACT_HANDOFF_DEBUG_FILE、無指定なら OS の temp ディレクトリに書く
 // （プロジェクトを汚さない）。
 export function resolveDebugLogPath(env = {}) {
-  if (!env.PRECOMPACT_HANDOFF_DEBUG) return null;
-  const override = env.PRECOMPACT_HANDOFF_DEBUG_FILE;
+  if (!env.COMPACT_HANDOFF_DEBUG) return null;
+  const override = env.COMPACT_HANDOFF_DEBUG_FILE;
   if (override && override.trim()) {
     return path.resolve(override.trim());
   }
-  return path.join(os.tmpdir(), "precompact-handoff-debug.log");
+  return path.join(os.tmpdir(), "compact-handoff-debug.log");
 }
 
 // デバッグログ用の log 関数を作る。resolveDebugLogPath が null を返す（未設定）ときは何もしない no-op。
@@ -344,13 +344,13 @@ if (
     assert.equal(resolveModel({}), "sonnet");
   });
 
-  test("resolveModel: PRECOMPACT_HANDOFF_MODEL 指定を優先", () => {
-    assert.equal(resolveModel({ PRECOMPACT_HANDOFF_MODEL: "haiku" }), "haiku");
+  test("resolveModel: COMPACT_HANDOFF_MODEL 指定を優先", () => {
+    assert.equal(resolveModel({ COMPACT_HANDOFF_MODEL: "haiku" }), "haiku");
   });
 
   test("resolveModel: 空文字・空白のみは既定値にフォールバック", () => {
-    assert.equal(resolveModel({ PRECOMPACT_HANDOFF_MODEL: "" }), "sonnet");
-    assert.equal(resolveModel({ PRECOMPACT_HANDOFF_MODEL: "   " }), "sonnet");
+    assert.equal(resolveModel({ COMPACT_HANDOFF_MODEL: "" }), "sonnet");
+    assert.equal(resolveModel({ COMPACT_HANDOFF_MODEL: "   " }), "sonnet");
   });
 
   test("resolveDebugLogPath: 既定(未設定)は null", () => {
@@ -358,14 +358,14 @@ if (
   });
 
   test("resolveDebugLogPath: 有効時は temp ディレクトリ", () => {
-    const p = resolveDebugLogPath({ PRECOMPACT_HANDOFF_DEBUG: "1" });
+    const p = resolveDebugLogPath({ COMPACT_HANDOFF_DEBUG: "1" });
     assert.ok(p.startsWith(os.tmpdir()));
-    assert.ok(p.endsWith("precompact-handoff-debug.log"));
+    assert.ok(p.endsWith("compact-handoff-debug.log"));
   });
 
   test("resolveDebugLogPath: DEBUG_FILE 指定を優先", () => {
     assert.equal(
-      resolveDebugLogPath({ PRECOMPACT_HANDOFF_DEBUG: "1", PRECOMPACT_HANDOFF_DEBUG_FILE: "/var/log/h.log" }),
+      resolveDebugLogPath({ COMPACT_HANDOFF_DEBUG: "1", COMPACT_HANDOFF_DEBUG_FILE: "/var/log/h.log" }),
       "/var/log/h.log"
     );
   });
