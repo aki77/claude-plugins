@@ -43,7 +43,7 @@
     {
       "name": "precompact-handoff",
       "source": "./plugins/precompact-handoff",
-      "description": "PreCompact hook that summarizes the conversation transcript via `claude -p` (Read-only) and writes/grows a HANDOFF.md handoff document at the project root before context compaction"
+      "description": "SessionStart(compact) hook that extracts the raw log segment dropped by compaction and has `claude -p` summarize only the gaps the standard compaction summary tends to miss (rejected alternatives, unexecuted commitments, constraints), injecting the result as additionalContext"
     }
   ]
 }

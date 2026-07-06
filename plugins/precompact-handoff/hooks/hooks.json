@@ -1,14 +1,14 @@
 {
-  "description": "PreCompact イベント時に会話トランスクリプトを claude -p に要約させ、HANDOFF.md を新規生成または差分更新する",
+  "description": "SessionStart(compact) で圧縮直前の会話ログの差分区間を抽出し、claude -p に標準要約で漏れがちな観点だけを抽出させ additionalContext として注入するプラグイン",
   "hooks": {
-    "PreCompact": [
+    "SessionStart": [
       {
-        "matcher": "",
+        "matcher": "compact",
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/precompact-handoff.mjs",
-            "timeout": 600
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/inject-handoff.mjs",
+            "timeout": 200
           }
         ]
       }

@@ -1,17 +1,18 @@
 {
   "name": "precompact-handoff",
-  "version": "0.1.0",
-  "description": "PreCompact フックで圧縮直前に会話トランスクリプトを claude -p（Read のみ許可）に要約させ、HANDOFF.md を新規生成/差分更新（育成モード）するプラグイン",
+  "version": "0.3.0",
+  "description": "SessionStart(compact) で圧縮直前の会話ログの差分区間を抽出し、claude -p に標準の圧縮要約では拾いきれない却下理由・未実行の手順約束・制約などのギャップだけを抽出させ additionalContext として注入するプラグイン",
   "author": {
     "name": "aki77",
     "email": "aki77@users.noreply.github.com"
   },
   "keywords": [
     "hooks",
-    "precompact",
     "compaction",
     "handoff",
     "context",
-    "summarization"
+    "summarization",
+    "session-start",
+    "gap-filling"
   ]
 }
