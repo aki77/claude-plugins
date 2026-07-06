@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const MIN_OUTPUT_CHARS = 50;
@@ -76,10 +76,22 @@ ${body}
 会話と同じ言語で書くこと。簡潔に。`;
 }
 
+// claude -p に渡す --allowedTools の値を組み立てる。
+// Read 権限をトランスクリプトファイル1件だけに絞り、プロンプト側の指示と多層防御にする。
+// `//` はファイルシステムルートからの絶対パスアンカーなので、先頭の "/" を落として連結する。
+// transcriptPath が絶対パスでない場合、絞り込みが機能しない不完全なルールを生成してしまうため
+// 呼び出し元で path.isAbsolute チェックを必須とする（fail-closed）。
+export function buildAllowedToolsArg(transcriptPath) {
+  return `Read(//${transcriptPath.slice(1)})`;
+}
+
 // claude -p の出力を採用してよいか判定する。
-// exit code が 0 で、中身が空白除去後 MIN_OUTPUT_CHARS 以上あるときだけ true。
+// exit code が 0、中身が空白除去後 MIN_OUTPUT_CHARS 以上、かつ1行目が「# HANDOFF」で
+// 始まる（前置き文が混入していない）ときだけ true。
 export function isValidOutput(output, exitCode) {
-  return exitCode === 0 && typeof output === "string" && output.trim().length >= MIN_OUTPUT_CHARS;
+  if (exitCode !== 0 || typeof output !== "string") return false;
+  const trimmed = output.trim();
+  return trimmed.length >= MIN_OUTPUT_CHARS && trimmed.startsWith("# HANDOFF");
 }
 
 // モデルが指示に反して出力全体を ```markdown ... ``` フェンスで囲んだ場合に、
@@ -166,6 +178,13 @@ async function main() {
     process.exit(0);
   }
 
+  // [3.1] transcriptPath が絶対パスでないと Read 権限の絞り込みが機能しないため、
+  // 前提が崩れている場合は Read を絞れないまま実行するより安全に停止する（fail-closed）。
+  if (!path.isAbsolute(transcriptPath)) {
+    log(`[3.1] transcript_path is not absolute: ${transcriptPath}`);
+    process.exit(0);
+  }
+
   // [3.5] 既存 HANDOFF.md（あれば育成モード）
   const handoffPath = resolveHandoffPath(cwd, process.env);
   let existingHandoff = "";
@@ -176,18 +195,23 @@ async function main() {
   }
   log(`[3.5] existing HANDOFF.md: ${existingHandoff ? existingHandoff.length + " chars" : "none"}`);
 
-  // [4] claude -p 呼び出し（Read のみ許可）
+  // [4] claude -p 呼び出し（Read はトランスクリプトファイル1件のみ許可）
   log("[4] calling claude -p...");
   const prompt = buildPrompt(existingHandoff, transcriptPath);
+  const allowedTools = buildAllowedToolsArg(transcriptPath);
   let claudeOutput = "";
   let exitCode = 0;
   try {
-    claudeOutput = execSync('claude -p --allowedTools "Read"', {
-      input: prompt,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: CLAUDE_TIMEOUT_MS,
-    });
+    claudeOutput = execFileSync(
+      "claude",
+      ["-p", "--allowedTools", allowedTools, "--permission-mode", "acceptEdits"],
+      {
+        input: prompt,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: CLAUDE_TIMEOUT_MS,
+      }
+    );
   } catch (err) {
     exitCode = err.status ?? 1;
     claudeOutput = err.stdout?.toString() ?? "";
@@ -245,6 +269,13 @@ if (
     assert.ok(buildPrompt("prev", "/x").includes("コードブロック（"));
   });
 
+  test("buildAllowedToolsArg: 絶対パスを Read(//path) 形式に変換する", () => {
+    assert.equal(
+      buildAllowedToolsArg("/Users/alice/.claude/projects/proj/session.jsonl"),
+      "Read(//Users/alice/.claude/projects/proj/session.jsonl)"
+    );
+  });
+
   test("isValidOutput: exit!=0 は false", () => {
     assert.equal(isValidOutput("a".repeat(100), 1), false);
   });
@@ -261,6 +292,11 @@ if (
   test("isValidOutput: 非文字列は false", () => {
     assert.equal(isValidOutput(undefined, 0), false);
     assert.equal(isValidOutput(null, 0), false);
+  });
+
+  test("isValidOutput: 前置き文が混入し1行目が # HANDOFF でないと false", () => {
+    const withPreamble = "承知しました。要約します。\n\n# HANDOFF\n" + "x".repeat(60);
+    assert.equal(isValidOutput(withPreamble, 0), false);
   });
 
   test("sanitizeOutput: ```markdown フェンスを剥がす", () => {
