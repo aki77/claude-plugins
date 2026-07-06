@@ -1,0 +1,17 @@
+{
+  "description": "PreCompact イベント時に会話トランスクリプトを claude -p に要約させ、HANDOFF.md を新規生成または差分更新する",
+  "hooks": {
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/precompact-handoff.mjs",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  }
+}

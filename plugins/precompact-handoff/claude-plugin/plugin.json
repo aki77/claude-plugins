@@ -1,0 +1,17 @@
+{
+  "name": "precompact-handoff",
+  "version": "0.1.0",
+  "description": "PreCompact フックで圧縮直前に会話トランスクリプトを claude -p（Read のみ許可）に要約させ、HANDOFF.md を新規生成/差分更新（育成モード）するプラグイン",
+  "author": {
+    "name": "aki77",
+    "email": "aki77@users.noreply.github.com"
+  },
+  "keywords": [
+    "hooks",
+    "precompact",
+    "compaction",
+    "handoff",
+    "context",
+    "summarization"
+  ]
+}

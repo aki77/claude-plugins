@@ -39,6 +39,11 @@
       "name": "plan-archive",
       "source": "./plugins/plan-archive",
       "description": "Stop hook that moves plan files older than 30 days (by mtime) into an archived/ subdirectory, resolving the plans directory from the transcript's planFilePath and prefixing each filename with its last-modified timestamp (YYYY-MM-DD_HHMM)"
+    },
+    {
+      "name": "precompact-handoff",
+      "source": "./plugins/precompact-handoff",
+      "description": "PreCompact hook that summarizes the conversation transcript via `claude -p` (Read-only) and writes/grows a HANDOFF.md handoff document at the project root before context compaction"
     }
   ]
 }
