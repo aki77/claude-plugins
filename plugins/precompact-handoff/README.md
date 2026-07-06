@@ -62,6 +62,7 @@ HANDOFF.md
 | `PRECOMPACT_HANDOFF_FILE` | `<cwd>/HANDOFF.md` | 引き継ぎ書の出力先。cwd 相対・絶対どちらも可（例: `.claude/HANDOFF.md`） |
 | `PRECOMPACT_HANDOFF_DEBUG` | 未設定（ログ無効） | 真の値を設定するとステップログ `[1]`〜`[6]` を出力する |
 | `PRECOMPACT_HANDOFF_DEBUG_FILE` | OS の temp ディレクトリ | デバッグログの出力先。既定は `<tmpdir>/precompact-handoff-debug.log`（プロジェクトを汚さない） |
+| `PRECOMPACT_HANDOFF_MODEL` | `sonnet` | `claude -p` に渡すモデル（`sonnet` / `haiku` / `opus` など） |
 
 ## 動作確認
 
@@ -73,5 +74,5 @@ HANDOFF.md
 
 - 会話が長いほど要約に時間がかかります（実測: 約 670KB のトランスクリプトで約 3 分）。極端に長い会話では `claude -p` の処理がフックの `timeout`（600 秒）を超える可能性があります。
 - 1 回の圧縮でフックが複数回発火することがありますが、書き込みは検証済み出力での上書きなので実害はありません。
-- 引き継ぎ書の品質は要約に使うモデルに依存します。
+- 引き継ぎ書の品質は要約に使うモデルに依存します。既定では要約品質を優先して `sonnet` を使用しますが、`PRECOMPACT_HANDOFF_MODEL` で変更できます。
 - `transcript_path` が絶対パス（POSIX 形式）でない場合、Read 権限をトランスクリプトファイル1件に絞る仕組みが機能しないため、フックは何もせず終了します（`HANDOFF.md` は生成されません）。

@@ -8,6 +8,9 @@ import { fileURLToPath } from "node:url";
 const MIN_OUTPUT_CHARS = 50;
 // hooks.json の timeout(600s) より少し下げ、kill される前にログ・exit できる余地を残す
 const CLAUDE_TIMEOUT_MS = 580_000;
+// 要約品質を優先してデフォルトは sonnet とする（長文トランスクリプトの取捨選択・
+// 育成モードでの意味的な差分マージ判断は haiku では精度が落ちやすいため）。
+const DEFAULT_MODEL = "sonnet";
 
 // claude -p に会話トランスクリプトを要約させるプロンプトを組み立てる。
 // existingHandoff が空なら新規作成、非空なら育成モード（差分更新）のプロンプトを返す。
@@ -128,6 +131,16 @@ export function resolveDebugLogPath(env = {}) {
   return path.join(os.tmpdir(), "precompact-handoff-debug.log");
 }
 
+// claude -p に渡すモデルを決める。
+// PRECOMPACT_HANDOFF_MODEL が指定されていればそれを優先、未指定なら DEFAULT_MODEL。
+export function resolveModel(env = {}) {
+  const override = env.PRECOMPACT_HANDOFF_MODEL;
+  if (override && override.trim()) {
+    return override.trim();
+  }
+  return DEFAULT_MODEL;
+}
+
 function readStdin() {
   return new Promise((resolve) => {
     let data = "";
@@ -196,7 +209,8 @@ async function main() {
   log(`[3.5] existing HANDOFF.md: ${existingHandoff ? existingHandoff.length + " chars" : "none"}`);
 
   // [4] claude -p 呼び出し（Read はトランスクリプトファイル1件のみ許可）
-  log("[4] calling claude -p...");
+  const model = resolveModel(process.env);
+  log(`[4] calling claude -p... model=${model}`);
   const prompt = buildPrompt(existingHandoff, transcriptPath);
   const allowedTools = buildAllowedToolsArg(transcriptPath);
   let claudeOutput = "";
@@ -204,7 +218,7 @@ async function main() {
   try {
     claudeOutput = execFileSync(
       "claude",
-      ["-p", "--allowedTools", allowedTools, "--permission-mode", "acceptEdits"],
+      ["-p", "--allowedTools", allowedTools, "--permission-mode", "acceptEdits", "--model", model],
       {
         input: prompt,
         encoding: "utf-8",
@@ -356,5 +370,18 @@ if (
       resolveDebugLogPath({ PRECOMPACT_HANDOFF_DEBUG: "1", PRECOMPACT_HANDOFF_DEBUG_FILE: "/var/log/h.log" }),
       "/var/log/h.log"
     );
+  });
+
+  test("resolveModel: 既定は sonnet", () => {
+    assert.equal(resolveModel({}), "sonnet");
+  });
+
+  test("resolveModel: PRECOMPACT_HANDOFF_MODEL 指定を優先", () => {
+    assert.equal(resolveModel({ PRECOMPACT_HANDOFF_MODEL: "haiku" }), "haiku");
+  });
+
+  test("resolveModel: 空文字・空白のみは既定値にフォールバック", () => {
+    assert.equal(resolveModel({ PRECOMPACT_HANDOFF_MODEL: "" }), "sonnet");
+    assert.equal(resolveModel({ PRECOMPACT_HANDOFF_MODEL: "   " }), "sonnet");
   });
 }
