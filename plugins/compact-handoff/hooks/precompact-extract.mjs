@@ -73,7 +73,7 @@ async function main() {
   try {
     claudeOutput = execFileSync(
       "claude",
-      ["-p", "--model", model],
+      ["-p", "--model", model, "--setting-sources", "", "--strict-mcp-config"],
       {
         input: prompt,
         encoding: "utf-8",
