@@ -8,7 +8,7 @@ disable-model-invocation: true
 次のコマンドを実行し、結果のJSONに応じて表示する。
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/skills/compact-handoff-status/scripts/show-last-injected.mjs
+CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" node ${CLAUDE_PLUGIN_ROOT}/skills/compact-handoff-status/scripts/show-last-injected.mjs
 ```
 
 - `found: false` の場合: 「このセッションではまだ compact-handoff による注入は行われていません」と伝えて終了する
