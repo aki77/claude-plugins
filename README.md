@@ -142,6 +142,29 @@ PR作成前のローカルブランチ変更を対象にレビューします。
 
 詳細は [plugins/code-review](plugins/code-review) を参照してください。
 
+### compact-handoff
+
+`PreCompact` と `SessionStart(compact)` の2フックで、圧縮（コンパクション）時に標準の要約が落としがちな判断の経緯（却下した選択肢、未実行の手順上の約束、今後を縛る制約など）を `claude -p` に抽出させ、次の会話に `additionalContext` として注入するプラグインです。
+
+**動作の仕組み:**
+- `PreCompact` フックが圧縮前に transcript の未処理分（前回処理済み行数からの差分）を取り出す
+- 抜き出したログ本文を `claude -p --model <model>`（ツール権限なし・読み取り専用の抽出者として）に渡し、標準要約と重複しない5カテゴリ（不採用の選択肢と理由／未実行の手順決定／制約・原則／plan mode 等のタスク状態／その他失われやすい具体値）だけを抽出させる
+- 抽出結果と処理済み行数を state ファイル（`${CLAUDE_PLUGIN_DATA}/<session_id>.json`）に保存
+- 圧縮完了後に発火する `SessionStart(compact)` フックが保存済みの結果を読み、`additionalContext`（モデルへ注入）と `systemMessage`（画面表示）を出力
+- 両フックとも処理の成否にかかわらず `exit 0` で返し、圧縮やセッション開始自体は止めない
+- 付属の `compact-handoff-status` スキルで、直近に注入された内容をいつでも再確認できる
+
+**前提条件:**
+- `claude -p` の実行に Claude Code のサブスクリプション（Max プランなど）が必要（API キーは不要）
+- `node` が `PATH` に存在すること
+
+**設定:**
+- `COMPACT_HANDOFF_DEBUG` — 真の値でステップログを出力（デフォルト：無効）
+- `COMPACT_HANDOFF_DEBUG_FILE` — デバッグログの出力先（デフォルト：`<tmpdir>/compact-handoff-debug.log`）
+- `COMPACT_HANDOFF_MODEL` — `claude -p` に渡すモデル（デフォルト：`sonnet`）
+
+詳細は [plugins/compact-handoff](plugins/compact-handoff) を参照してください。
+
 ## インストール
 
 ### 前提条件
