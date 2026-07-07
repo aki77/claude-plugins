@@ -54,7 +54,7 @@ state ファイルに保存するのは「前回処理済みの行数」と「�
 
 ## 動作確認
 
-プロジェクトで Claude Code を起動し、数回やりとりしてから `/compact` を実行します。圧縮が完了すると、抽出結果があれば `SessionStart(compact)` フックが画面に `systemMessage` を表示し `additionalContext` として注入します（該当情報が無い場合・抽出に失敗した場合もその旨が画面に表示されます）。手動の `/compact` でも自動圧縮でも動きます。
+プロジェクトで Claude Code を起動し、数回やりとりしてから `/compact` を実行します。圧縮が完了すると、抽出結果があれば `SessionStart(compact)` フックが画面に `systemMessage` を表示し `additionalContext` として注入します（該当情報が無い場合・抽出に失敗した場合もその旨が画面に表示されます）。手動の `/compact` でも自動圧縮でも動きます。直近の注入内容は `compact-handoff-status` スキルでいつでも再確認できます。
 
 うまく動かないときは `COMPACT_HANDOFF_DEBUG=1` を設定して再現し、`<tmpdir>/compact-handoff-debug.log` のステップログを確認してください。
 

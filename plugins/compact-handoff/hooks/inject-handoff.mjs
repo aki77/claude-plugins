@@ -42,7 +42,8 @@ async function main() {
 
   // 二重注入を防ぐため、内容を使う前に消費済み(pending: null)として保存する。
   // lastProcessedLineCount は PreCompact 側の位置ブックマークなのでそのまま温存する。
-  writeState(statePath, { ...state, pending: null });
+  // 消費した内容は lastInjected に退避し、後から compact-handoff-status スキルで確認できるようにする。
+  writeState(statePath, { ...state, pending: null, lastInjected: pending });
 
   if (pending.status === "error") {
     log("[4] pending status=error");
