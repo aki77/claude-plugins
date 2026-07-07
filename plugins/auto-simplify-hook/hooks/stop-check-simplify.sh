@@ -12,9 +12,33 @@ fi
 # 必要なフィールドを取得
 TRANSCRIPT=$(printf '%s' "$INPUT" | jq -r '.transcript_path // ""')
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // "."')
+SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.session_id // ""')
+
+# セッション単位の無効化チェック（/toggle session off、TTL 24時間）
+SESSIONS_FILE="${CLAUDE_PLUGIN_DATA:-}/sessions.json"
+if [[ -n "${CLAUDE_PLUGIN_DATA:-}" ]] && [[ -n "$SESSION_ID" ]] && [[ -f "$SESSIONS_FILE" ]]; then
+  NOW_MS=$(($(date +%s) * 1000))
+  SESSION_DISABLED=$(jq -r --arg sid "$SESSION_ID" --argjson now "$NOW_MS" '
+    (.[$sid] // {}) as $entry
+    | if ($entry.disabled == true) and (($now - ($entry.ts // 0)) < 86400000)
+      then "true" else "false" end
+  ' "$SESSIONS_FILE" 2>/dev/null || echo "false")
+  if [[ "$SESSION_DISABLED" == "true" ]]; then
+    exit 0
+  fi
+fi
 
 # cwdが無効な場合はスキップ
 [[ -z "$CWD" ]] && exit 0
+
+# プロジェクト単位の無効化チェック（/toggle project off）
+PROJECTS_FILE="${CLAUDE_PLUGIN_DATA:-}/projects.json"
+if [[ -n "${CLAUDE_PLUGIN_DATA:-}" ]] && [[ -f "$PROJECTS_FILE" ]]; then
+  PROJECT_DISABLED=$(jq -r --arg cwd "$CWD" '(.[$cwd].enabled == false)' "$PROJECTS_FILE" 2>/dev/null || echo "false")
+  if [[ "$PROJECT_DISABLED" == "true" ]]; then
+    exit 0
+  fi
+fi
 
 # gitリポジトリ確認（失敗時はスキップ）
 git -C "$CWD" rev-parse --is-inside-work-tree > /dev/null 2>&1 || exit 0
