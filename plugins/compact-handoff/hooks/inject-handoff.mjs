@@ -281,30 +281,35 @@ async function main() {
   const cleaned = sanitizeOutput(claudeOutput);
   log(`[6] exit=${exitCode} output=${cleaned.length} chars`);
 
-  if (!isValidOutput(cleaned, exitCode)) {
-    log("[6] output invalid or no gap content, nothing injected");
+  // JSON出力(systemMessage等)をstdoutへ書き、処理済みuuidを保存してから終了する。
+  // main()の3つの終了分岐（失敗・NO_GAP_CONTENT・成功）が共有する末尾処理。
+  const finish = (payload) => {
+    console.log(JSON.stringify(payload));
     writeLastProcessedUuid(statePath, segment.latestBoundary.obj.uuid);
     process.exit(0);
+  };
+
+  if (!isValidOutput(cleaned, exitCode)) {
+    log("[6] output invalid or no gap content, nothing injected");
+    finish({
+      systemMessage: "[compact-handoff] 圧縮の隙間情報の抽出に失敗しました（詳細はデバッグログ参照）",
+    });
   }
   if (cleaned.trim() === "(NO_GAP_CONTENT)") {
     log("[6] no gap content, nothing injected");
-    writeLastProcessedUuid(statePath, segment.latestBoundary.obj.uuid);
-    process.exit(0);
+    finish({ systemMessage: "[compact-handoff] 今回は注入すべき情報はありませんでした" });
   }
 
   const additionalContext = buildAdditionalContext(cleaned);
-  console.log(
-    JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "SessionStart",
-        additionalContext,
-      },
-    })
-  );
-  writeLastProcessedUuid(statePath, segment.latestBoundary.obj.uuid);
   log(`[7] injected additionalContext: ${additionalContext.length} chars`);
   log(`=== SessionStart(compact) hook finished: ${new Date().toISOString()} ===`);
-  process.exit(0);
+  finish({
+    systemMessage: `[compact-handoff] 圧縮の隙間情報を注入しました:\n\n${cleaned}`,
+    hookSpecificOutput: {
+      hookEventName: "SessionStart",
+      additionalContext,
+    },
+  });
 }
 
 if (!process.env.NODE_TEST_CONTEXT) {
