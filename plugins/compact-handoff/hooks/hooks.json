@@ -1,6 +1,18 @@
 {
-  "description": "SessionStart(compact) で圧縮直前の会話ログの差分区間を抽出し、claude -p に標準要約で漏れがちな観点だけを抽出させ additionalContext として注入するプラグイン",
+  "description": "PreCompact で圧縮前の会話ログの差分区間を抽出し claude -p に標準要約で漏れがちな観点だけを抽出させて保存し、SessionStart(compact) でそれを additionalContext として注入するプラグイン",
   "hooks": {
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/precompact-extract.mjs",
+            "timeout": 600
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "matcher": "compact",

@@ -14,28 +14,22 @@ export function parseTranscriptLines(rawText) {
   });
 }
 
-// compact_boundary 行（圧縮が実行された境界を示すシステム行）を行順に列挙する。
-export function findCompactBoundaries(parsedLines) {
-  return parsedLines
-    .filter(({ obj }) => obj?.type === "system" && obj?.subtype === "compact_boundary")
-    .map(({ lineIndex, obj }) => ({ lineIndex, obj }));
+// ファイル末尾の改行由来で split("\n") が生む末尾の空要素を数えないための実効行数。
+// これを totalLineCount に含めると、次回 slice(totalLineCount) が常に1行分ズレて
+// 最新の追記行を見逃し続けるバグになるため、次回の位置ブックマークには使わない。
+function effectiveLineCount(parsedLines) {
+  let count = parsedLines.length;
+  while (count > 0 && parsedLines[count - 1].raw.trim() === "") count--;
+  return count;
 }
 
-// 直近の圧縮で捨てられた生ログ区間を取り出す。
-// 境界が無ければ null（このフックは何もすべきではない）。
-// 直前の境界（あれば）の次行 〜 最新境界の前行までを対象とし、境界行自体（メタデータ）は除外する。
-export function extractLatestSegment(parsedLines) {
-  const boundaries = findCompactBoundaries(parsedLines);
-  if (boundaries.length === 0) return null;
-
-  const latestBoundary = boundaries[boundaries.length - 1];
-  const previousBoundary = boundaries.length >= 2 ? boundaries[boundaries.length - 2] : null;
-
-  const start = (previousBoundary?.lineIndex ?? -1) + 1;
-  const end = latestBoundary.lineIndex;
-
-  const segmentText = parsedLines
-    .slice(start, end)
+// 前回処理済みの行数(lastProcessedLineCount)より後ろの行だけを取り出す。
+// compact_boundary（非公開スキーマ、圧縮完了後にしか存在しない）に依存しない、
+// PreCompact 用の差分抽出関数。PreCompact は圧縮処理より前に発火するため、
+// この時点の transcript は「前回 PreCompact 以降に増えた行」を素直に末尾から取れば十分。
+export function extractNewSegment(parsedLines, lastProcessedLineCount) {
+  const newLines = parsedLines.slice(lastProcessedLineCount);
+  const segmentText = newLines
     .map(({ raw }) => raw)
     .filter((raw) => raw.trim() !== "")
     .join("\n");
@@ -43,16 +37,8 @@ export function extractLatestSegment(parsedLines) {
   return {
     segmentText,
     isEmpty: segmentText.trim() === "",
-    latestBoundary,
-    previousBoundary,
+    totalLineCount: effectiveLineCount(parsedLines),
   };
-}
-
-// 最新境界のuuidが lastProcessedUuid と同じ（または境界自体が無い）なら、
-// 「今回の SessionStart に対応する新しい境界がまだ書き込まれていない」とみなす。
-export function isSegmentStale(segment, lastProcessedUuid) {
-  if (!segment) return true;
-  return segment.latestBoundary.obj.uuid === lastProcessedUuid;
 }
 
 // ---- インラインテスト --------------------------------------------------------
@@ -64,15 +50,13 @@ if (
   const assert = (await import("node:assert/strict")).default;
 
   const line = (obj) => JSON.stringify(obj);
-  const boundary = () => line({ type: "system", subtype: "compact_boundary" });
   const userMsg = (text) => line({ type: "user", message: { role: "user", content: text } });
 
   test("parseTranscriptLines: 正常な行を全てパースする", () => {
-    const raw = [userMsg("a"), boundary(), userMsg("b")].join("\n");
+    const raw = [userMsg("a"), userMsg("b")].join("\n");
     const parsed = parseTranscriptLines(raw);
-    assert.equal(parsed.length, 3);
+    assert.equal(parsed.length, 2);
     assert.equal(parsed[0].obj.type, "user");
-    assert.equal(parsed[1].obj.subtype, "compact_boundary");
   });
 
   test("parseTranscriptLines: 壊れた行は obj:null として保持し、他行は落とさない", () => {
@@ -89,97 +73,61 @@ if (
     assert.equal(parsed[1].obj, null);
   });
 
-  test("findCompactBoundaries: 境界が無ければ空配列", () => {
-    const parsed = parseTranscriptLines([userMsg("a"), userMsg("b")].join("\n"));
-    assert.deepEqual(findCompactBoundaries(parsed), []);
-  });
-
-  test("findCompactBoundaries: 複数境界を行順で返す", () => {
-    const raw = [userMsg("a"), boundary(), userMsg("b"), boundary(), userMsg("c")].join("\n");
+  test("extractNewSegment: lastProcessedLineCount=0 は全行を対象にする(初回)", () => {
+    const raw = [userMsg("a"), userMsg("b")].join("\n");
     const parsed = parseTranscriptLines(raw);
-    const boundaries = findCompactBoundaries(parsed);
-    assert.equal(boundaries.length, 2);
-    assert.equal(boundaries[0].lineIndex, 1);
-    assert.equal(boundaries[1].lineIndex, 3);
-  });
-
-  test("extractLatestSegment: 境界が無ければ null", () => {
-    const parsed = parseTranscriptLines([userMsg("a"), userMsg("b")].join("\n"));
-    assert.equal(extractLatestSegment(parsed), null);
-  });
-
-  test("extractLatestSegment: 初回compact(境界1件)はファイル先頭から境界前までを対象にする", () => {
-    const raw = [userMsg("a"), userMsg("b"), boundary(), userMsg("c")].join("\n");
-    const parsed = parseTranscriptLines(raw);
-    const result = extractLatestSegment(parsed);
-    assert.equal(result.previousBoundary, null);
-    assert.equal(result.segmentText, [userMsg("a"), userMsg("b")].join("\n"));
+    const result = extractNewSegment(parsed, 0);
+    assert.equal(result.segmentText, raw);
     assert.equal(result.isEmpty, false);
+    assert.equal(result.totalLineCount, 2);
   });
 
-  test("extractLatestSegment: 2回目以降のcompactは直前境界〜最新境界の差分のみを対象にする", () => {
-    const raw = [
-      userMsg("a"),
-      boundary(),
-      userMsg("b"),
-      userMsg("c"),
-      boundary(),
-      userMsg("d"),
-    ].join("\n");
+  test("extractNewSegment: lastProcessedLineCount より後ろの行だけを対象にする", () => {
+    const raw = [userMsg("a"), userMsg("b"), userMsg("c")].join("\n");
     const parsed = parseTranscriptLines(raw);
-    const result = extractLatestSegment(parsed);
+    const result = extractNewSegment(parsed, 1);
     assert.equal(result.segmentText, [userMsg("b"), userMsg("c")].join("\n"));
     assert.ok(!result.segmentText.includes(userMsg("a")));
   });
 
-  test("extractLatestSegment: 境界行自体は区間に含めない", () => {
-    const raw = [userMsg("a"), boundary()].join("\n");
+  test("extractNewSegment: lastProcessedLineCount が総行数と同じなら isEmpty true", () => {
+    const raw = [userMsg("a"), userMsg("b")].join("\n");
     const parsed = parseTranscriptLines(raw);
-    const result = extractLatestSegment(parsed);
-    assert.ok(!result.segmentText.includes("compact_boundary"));
-  });
-
-  test("extractLatestSegment: 境界が隣接していて差分が空の場合は isEmpty true", () => {
-    const raw = [boundary(), boundary(), userMsg("a")].join("\n");
-    const parsed = parseTranscriptLines(raw);
-    const result = extractLatestSegment(parsed);
+    const result = extractNewSegment(parsed, parsed.length);
     assert.equal(result.segmentText, "");
     assert.equal(result.isEmpty, true);
   });
 
-  test("extractLatestSegment: 境界がファイル末尾でも正しく動作する", () => {
-    const raw = [userMsg("a"), boundary()].join("\n");
+  test("extractNewSegment: 区間途中の空行はsegmentTextから除かれるがtotalLineCountには数える", () => {
+    const raw = [userMsg("a"), "", userMsg("b")].join("\n");
     const parsed = parseTranscriptLines(raw);
-    const result = extractLatestSegment(parsed);
-    assert.equal(result.isEmpty, false);
-    assert.equal(result.segmentText, userMsg("a"));
+    const result = extractNewSegment(parsed, 0);
+    assert.equal(result.segmentText, [userMsg("a"), userMsg("b")].join("\n"));
+    assert.equal(result.totalLineCount, 3);
   });
 
-  const boundaryWithUuid = (uuid) =>
-    line({ type: "system", subtype: "compact_boundary", uuid });
-
-  test("isSegmentStale: segmentがnull(境界なし)ならstale", () => {
-    assert.equal(isSegmentStale(null, "uuid-1"), true);
+  test("extractNewSegment: totalLineCount は lastProcessedLineCount に関わらず一定", () => {
+    const raw = [userMsg("a"), userMsg("b"), userMsg("c")].join("\n");
+    const parsed = parseTranscriptLines(raw);
+    assert.equal(extractNewSegment(parsed, 0).totalLineCount, 3);
+    assert.equal(extractNewSegment(parsed, 2).totalLineCount, 3);
   });
 
-  test("isSegmentStale: 最新境界のuuidがlastProcessedUuidと同じならstale", () => {
-    const raw = [userMsg("a"), boundaryWithUuid("uuid-1")].join("\n");
-    const parsed = parseTranscriptLines(raw);
-    const segment = extractLatestSegment(parsed);
-    assert.equal(isSegmentStale(segment, "uuid-1"), true);
-  });
+  test("extractNewSegment: ファイル末尾の改行由来の空要素は totalLineCount に含めない(次回の1行取りこぼしバグ回帰防止)", () => {
+    // fs.readFileSync + split("\n") は末尾に改行があると常に末尾に空文字列の要素を1つ生む。
+    // これを totalLineCount に含めてしまうと、次回 slice(totalLineCount) が1行分ズレて
+    // 直後に追記された行を永久に見逃す（実際に発生した回帰）。
+    const rawWithTrailingNewline = userMsg("a") + "\n" + userMsg("b") + "\n";
+    const parsed = parseTranscriptLines(rawWithTrailingNewline);
+    assert.equal(parsed.length, 3); // 実データ2行 + 末尾空要素1個
+    const result = extractNewSegment(parsed, 0);
+    assert.equal(result.totalLineCount, 2);
 
-  test("isSegmentStale: 最新境界のuuidがlastProcessedUuidと異なればstaleでない", () => {
-    const raw = [userMsg("a"), boundaryWithUuid("uuid-2")].join("\n");
-    const parsed = parseTranscriptLines(raw);
-    const segment = extractLatestSegment(parsed);
-    assert.equal(isSegmentStale(segment, "uuid-1"), false);
-  });
-
-  test("isSegmentStale: lastProcessedUuidがnull(未処理)なら常にstaleでない", () => {
-    const raw = [userMsg("a"), boundaryWithUuid("uuid-1")].join("\n");
-    const parsed = parseTranscriptLines(raw);
-    const segment = extractLatestSegment(parsed);
-    assert.equal(isSegmentStale(segment, null), false);
+    // 次回、1行だけ追記された状態を模す。
+    const appended = rawWithTrailingNewline + userMsg("c") + "\n";
+    const parsedNext = parseTranscriptLines(appended);
+    const nextResult = extractNewSegment(parsedNext, result.totalLineCount);
+    assert.equal(nextResult.isEmpty, false);
+    assert.equal(nextResult.segmentText, userMsg("c"));
   });
 }
