@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { resolveStatePath, readState } from "../../../hooks/handoff-shared.mjs";
 
-const sessionId = process.env.CLAUDE_SESSION_ID;
+const sessionId = process.env.CLAUDE_CODE_SESSION_ID;
 if (!sessionId) {
-  console.log(JSON.stringify({ found: false, reason: "CLAUDE_SESSION_ID not set" }));
+  console.log(JSON.stringify({ found: false, reason: "CLAUDE_CODE_SESSION_ID not set" }));
   process.exit(0);
 }
 
