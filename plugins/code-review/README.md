@@ -23,6 +23,8 @@ GitHub のプルリクエスト、またはローカルの git 差分に対し�
 
 変更規模（`tier`: `tiny` / `small` / `normal`）に応じて、サマリ生成やエージェント起動数が自動的に縮退し、小さな変更ではレビューが速く安く終わるようになっています。
 
+各課題（issue）には分類軸として `category`（`bug` / `security` / `performance` / `rule-violation`）と `severity`（`critical` / `high` / `medium` / `low`）が付与され、ターミナルサマリとインラインコメント本文に `[category · severity]` バッジとして表示されます。これはレビューエージェントが finding 出力時に自己申告し、以降の集約・グルーピングはスクリプトが機械的に行う値です（severity によるフィルタ/ソート/CI ゲーティングは行いません）。
+
 ## カスタマイズ
 
 プラグイン内の Markdown（`shared/review-core.md` や各 `SKILL.md`）は直接編集できません。レビュー観点をカスタマイズしたい場合は、リポジトリのルート直下に `REVIEW.md` を置いてください。エージェント5がそこに記載された観点への新規違反を監査します（CLAUDE.md / `.claude/rules/` によるプロジェクトルール準拠チェックとは別軸です）。

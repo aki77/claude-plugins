@@ -40,7 +40,7 @@ disable-model-invocation: true
 
    **重要（suggestion の破壊的編集を防ぐ）:** GitHub は `params` の行範囲（＝ `existingCode` の範囲）を suggestion 本文で**丸ごと置換**する。suggestion 本文の行数が範囲より短いと、余った既存行が**削除される**。過去に「コメント指摘のはずが次行の gitignore 本体まで消えた」事故が起きたのはこのため。これを防ぐため、suggestion 本文は `existingCode` を土台に機械的に作り、`post-review.mjs` が範囲との整合を検証（不整合なら suggestion を自動で捨てて文章のみ投稿）する。以下に従うこと:
 
-   - `commentBody`: 課題の概要を簡潔に記述する（issue の `title`/`body` を基にする。引用元リンクを含める）。**`suggestion` ブロック（```suggestion）を自分で書かない**（スクリプトが組み立てる）。
+   - `commentBody`: 本文の先頭に issue の `[category · severity]` バッジを付ける（`jq -r '.issues[] | select(.id=="<id>") | "[\(.category) · \(.severity)]"' "$FINAL"` で取得できる）。続けて課題の概要を簡潔に記述する（issue の `title`/`body` を基にする。引用元リンクを含める）。**`suggestion` ブロック（```suggestion）を自分で書かない**（スクリプトが組み立てる）。
    - 小規模で自己完結する修正には `suggestion` を付けてよい。**手順:** issue の `existingCode` を `jq` で逐語取得し（`jq -r '.issues[] | select(.id=="<id>") | .existingCode' "$FINAL"`）、それを土台に**該当行だけ**を編集した最終形を作る。**変更しない行は1文字も変えずそのまま残す。** これが「範囲を丸ごと置き換える最終形」になる。
    - **行を削除する修正**（範囲から行を減らす）では、消す既存行を `deleteLines`（消してよい既存行の逐語）に**明示する**。この明示が無いと `post-review.mjs` の機械ガードが suggestion を捨てて文章のみにする。
    - **複数メンバーの統合 issue（`sourceFindingIds` が2件以上）には `suggestion` を付けない**（`existingCode` が範囲全体を表さず、機械ガードが捨てるため）。文章で修正方針を書く。

@@ -139,7 +139,9 @@ CTX（ステップ1） → CLUSTERS（ステップ2b） → FINDINGS（ステッ
        "title": "1行要約",
        "body": "課題の説明。指摘理由と、引用元（CLAUDE.md / .claude/rules/ / REVIEW.md 観点ファイル等）へのリンクを含める。",
        "existingCode": "diff から逐語コピーした連続コード片（アンカー）",
-       "ruleRefs": ["CLAUDE.md"]
+       "ruleRefs": ["CLAUDE.md"],
+       "category": "bug",
+       "severity": "high"
      }
    ]
    ```
@@ -149,6 +151,8 @@ CTX（ステップ1） → CLUSTERS（ステップ2b） → FINDINGS（ステッ
    - `path`: 対象ファイルの相対パス（`changedFiles` に含まれるパス。対象外ファイルを指摘しない）。
    - `title`: 課題の1行要約。
    - `body`: 課題の説明。指摘理由と引用元リンクを含める。
+   - `category`: 課題の種別。`bug`（ロジック誤り・クラッシュ等）/ `security`（セキュリティ上の欠陥）/ `performance`（性能劣化）/ `rule-violation`（CLAUDE.md・`.claude/rules/`・REVIEW.md 違反）のいずれか。**エージェント1・2・5（ルール準拠・REVIEW.md準拠系）は必ず `rule-violation`** を指定すること（`kind` との一貫性を担保するため）。エージェント3・4（バグ検出系）は `bug` / `security` / `performance` のいずれか最も当てはまるものを選ぶ。
+   - `severity`: 深刻度。`critical`（データ破壊・セキュリティ侵害・クラッシュなど重大で即修正必須）/ `high`（重要な欠陥）/ `medium`（明確だが影響は限定的）/ `low`（軽微だが直す価値がある）のいずれか。
    - `existingCode`: **コメントを貼る位置のアンカー**。diff 中にそのまま存在する連続した数行を**逐語コピー**する（行番号はスクリプトが確定するので書かない）。次を厳守:
      - diff の該当箇所からコード片を**逐語コピー**する（先頭の `+`/`-`/半角スペースの diff マーカーは含めない。実際のコード内容だけをインデント込みで写す。書き換え・整形もしない）。
      - **アンカーは diff の片側（追加後＝`+`/コンテキスト行、または削除前＝`-`/コンテキスト行のどちらか一方）だけで構成する。追加行と削除行を1つのアンカーに混在させない**（例: 31行目が削除行、32行目が追加行の場合、この2行を1つの `existingCode` にまとめてはならない。スクリプトは新旧いずれか片側の連続一致でのみアンカーを解決するため、削除行と追加行が混在すると必ず解決に失敗する）。
@@ -191,7 +195,7 @@ CTX（ステップ1） → CLUSTERS（ステップ2b） → FINDINGS（ステッ
 7. **verdicts を束ねて機械適用し FINAL を生成する。** ステップ6の各検証サブエージェントが返した verdict ファイルのパスを集め、`node ${CLAUDE_PLUGIN_ROOT}/scripts/apply-verdicts.mjs --issues "$ISSUES" --infile <issue1の verdict パス> --infile <issue2の verdict パス> ...` として**検証エージェントごとに `--infile` を1つずつ**渡す（各ファイルは verdict オブジェクト1件。スクリプトが読み込んで配列に均す）。**応答なし／再起動してもなお失敗した検証エージェントのパスは `--infile` に含めない**。印字されたパスを `FINAL=/印字されたパス`（リテラル代入。`$(...)` で束ねない）として束ねる。スクリプトは `confirmed` のみを最終課題として残し、`rejected` は理由付きで記録、**`--infile` に現れない issue は `unverified` として除外**する（検証サブエージェント失敗時の縮退もこの経路に一本化され、暗黙でなく成果物 `FINAL` に残る）。未知 id・重複 id・enum 外はエラーになる。`FINAL` は `{ issues:[confirmed の issue 全体], rejected[], unverified[], stats }` を持つ。
 
 8. **レビュー結果のサマリをターミナルに出力する（表示ソースは `FINAL` に固定）:**
-   - 課題（`FINAL.issues` = confirmed）が見つかった場合は、それぞれの簡潔な説明を一覧表示する。`resolved:true` の issue は `path:line`（`params.line`）を添える（`jq -r '.issues[] | "\(.path):\(.params.line // "-")  \(.title)"' "$FINAL"`）。
+   - 課題（`FINAL.issues` = confirmed）が見つかった場合は、それぞれの簡潔な説明を `[category · severity]` バッジ付きで一覧表示する。`resolved:true` の issue は `path:line`（`params.line`）を添える（`jq -r '.issues[] | "[\(.category) · \(.severity)] \(.path):\(.params.line // "-")  \(.title)"' "$FINAL"`）。
    - `FINAL.rejected` / `FINAL.unverified` が空でなければ、それぞれ件数を明示する（`jq -r '.stats.rejected' "$FINAL"` / `jq -r '.stats.unverified' "$FINAL"`）。黙って消えていないことを可視化する。
    - 課題が見つからなかった場合（`FINAL.issues` が空）は、「問題は見つかりませんでした。バグ・プロジェクトルール（CLAUDE.md / .claude/rules/）準拠・REVIEW.md準拠を確認しました。」と表示する。
    - `excludedFiles` が空でない場合は、末尾に「レビュー対象外: N ファイル（生成物/バイナリ等）」と件数を明示し、対象ファイル名を一覧する（`jq -r '.excludedFiles | length' "$CTX"` と `jq -r '.excludedFiles[]' "$CTX"` を使う）。暗黙にスキップしたと誤解されないよう、必ず表示すること。

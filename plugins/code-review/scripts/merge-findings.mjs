@@ -4,14 +4,16 @@
 // 統合文章のみ LLM** という分担を実装する。
 //
 // singleton グループ（メンバー1件）は唯一の finding の title/body を自動コピーする。
-// path / kind / params / resolved / existingCode（グループ先頭メンバー）/ ruleRefs（和集合）は
-// **すべてスクリプトが機械転写**し、LLM を経由させない（転記ミス防止）。
+// path / kind / category / severity / params / resolved / existingCode（グループ先頭メンバー）/
+// ruleRefs（和集合）は**すべてスクリプトが機械転写**し、LLM を経由させない（転記ミス防止）。
+// category/severity は process-findings.mjs のグループ集約規則で確定済みの値をそのままコピーする
+// （kind と同じ扱い。LLM の統合文章 title/body とは独立）。
 //
 // 入力:
 //   引数 --findings <FINDINGS> : process-findings.mjs の FINDINGS ファイルパス。
 //   stdin (JSON): [{ groupId, title, body }] （needsMergeText:true の全グループ分**のみ**）。
 // 出力(stdout): ISSUES 成果物ファイルのパス（1行）。中身は
-//   { issues:[{ id, path, kind, title, body, ruleRefs, existingCode, resolved, params?, sourceFindingIds }], stats }
+//   { issues:[{ id, path, kind, category, severity, title, body, ruleRefs, existingCode, resolved, params?, sourceFindingIds }], stats }
 import { fileURLToPath } from "node:url";
 import { fail, parseFlags, readArtifact, readSingleInputJson, writeArtifact } from "./lib/artifact.mjs";
 
@@ -76,6 +78,8 @@ export function mergeFindings(findingsDoc, mergeTexts) {
       id: g.id,
       path: g.path,
       kind: g.kind,
+      category: g.category,
+      severity: g.severity,
       title,
       body,
       ruleRefs,
@@ -143,13 +147,13 @@ if (
 
   const doc = {
     findings: [
-      { id: "f1", path: "a.js", kind: "bug", title: "T1", body: "B1", existingCode: "x", ruleRefs: [], params: { line: 2, side: "RIGHT", subjectType: "LINE" }, resolved: true, status: "active" },
-      { id: "f2", path: "a.js", kind: "rule", title: "T2", body: "B2", existingCode: "x", ruleRefs: ["CLAUDE.md"], params: { line: 2, side: "RIGHT", subjectType: "LINE" }, resolved: true, status: "active" },
-      { id: "f3", path: "b.js", kind: "rule", title: "T3", body: "B3", existingCode: "y", ruleRefs: ["REVIEW.md"], resolved: false, reason: "不一致", status: "active" },
+      { id: "f1", path: "a.js", kind: "bug", category: "performance", severity: "low", title: "T1", body: "B1", existingCode: "x", ruleRefs: [], params: { line: 2, side: "RIGHT", subjectType: "LINE" }, resolved: true, status: "active" },
+      { id: "f2", path: "a.js", kind: "rule", category: "security", severity: "critical", title: "T2", body: "B2", existingCode: "x", ruleRefs: ["CLAUDE.md"], params: { line: 2, side: "RIGHT", subjectType: "LINE" }, resolved: true, status: "active" },
+      { id: "f3", path: "b.js", kind: "rule", category: "rule-violation", severity: "medium", title: "T3", body: "B3", existingCode: "y", ruleRefs: ["REVIEW.md"], resolved: false, reason: "不一致", status: "active" },
     ],
     groups: [
-      { id: "g1", path: "a.js", kind: "bug", resolved: true, memberIds: ["f1", "f2"], needsMergeText: true, params: { line: 2, side: "RIGHT", subjectType: "LINE" } },
-      { id: "g2", path: "b.js", kind: "rule", resolved: false, memberIds: ["f3"], needsMergeText: false, reason: "不一致" },
+      { id: "g1", path: "a.js", kind: "bug", category: "security", severity: "critical", resolved: true, memberIds: ["f1", "f2"], needsMergeText: true, params: { line: 2, side: "RIGHT", subjectType: "LINE" } },
+      { id: "g2", path: "b.js", kind: "rule", category: "rule-violation", severity: "medium", resolved: false, memberIds: ["f3"], needsMergeText: false, reason: "不一致" },
     ],
   };
 
@@ -164,11 +168,20 @@ if (
     assert.deepEqual(g1.sourceFindingIds, ["f1", "f2"]);
   });
 
+  test("グループの category/severity をそのまま機械転写する（LLM の統合文章と独立）", () => {
+    const { issues } = mergeFindings(doc, [{ groupId: "g1", title: "統合", body: "統合本文" }]);
+    const g1 = issues.find((i) => i.id === "g1");
+    assert.equal(g1.category, "security");
+    assert.equal(g1.severity, "critical");
+  });
+
   test("singleton グループは唯一メンバーの title/body を自動コピー", () => {
     const { issues } = mergeFindings(doc, [{ groupId: "g1", title: "統合", body: "統合本文" }]);
     const g2 = issues.find((i) => i.id === "g2");
     assert.equal(g2.title, "T3");
     assert.equal(g2.body, "B3");
+    assert.equal(g2.category, "rule-violation");
+    assert.equal(g2.severity, "medium");
     assert.equal(g2.resolved, false);
     assert.equal(g2.reason, "不一致");
     assert.equal("params" in g2, false);

@@ -6,11 +6,13 @@
 // （existingCode アンカー）」付きの finding を JSON で出すだけ。このスクリプトが以下を
 // すべて機械的に行い、実行ごとのブレ・黙殺・転記ミスを排除する:
 //   1. ID 付与（入力順 f1..fN）
-//   2. スキーマ検証（違反は finding 単位で status:"invalid"。全体は落とさない）
+//   2. スキーマ検証（違反は finding 単位で status:"invalid"。全体は落とさない。category/severity の
+//      enum 検証・agent 1/2/5 の category=rule-violation 整合チェックを含む）
 //   3. スコープ機械チェック（path ∉ changedFiles / ∈ excludedFiles → status:"out-of-scope"）
 //   4. kind 導出（agent 3,4 → bug / 1,2,5 → rule。LLM に書かせない）
 //   5. アンカー解決（lib/diff-anchor の resolveAnchor で行番号を確定）
-//   6. 機械グルーピング（旧ステップ4「重複統合」の機械化。行範囲の重なり / 同一アンカー）
+//   6. 機械グルーピング（旧ステップ4「重複統合」の機械化。行範囲の重なり / 同一アンカー。
+//      グループの category/severity も決定論的に導出する）
 //
 // 入力:
 //   引数 --context <CTX>            : collect-review-context.mjs の CTX ファイルパス。
@@ -29,9 +31,35 @@ import { buildDiffArgs, parseDiff, resolveAnchor, splitAndNormalize } from "./li
 
 // ---- スキーマ検証 ------------------------------------------------------------
 // finding 1 件のスキーマを検証し、違反理由の配列を返す（空なら valid）。
-// 必須: agent∈1..5 / path / title / body / existingCode。ruleRefs は agent 1,2,5 で必須、
-// 3,4 では省略可（後段で [] 補完）。
+// 必須: agent∈1..5 / path / title / body / existingCode / category / severity。
+// ruleRefs は agent 1,2,5 で必須、3,4 では省略可（後段で [] 補完）。
+// category は agent 種別と双方向で整合していることを強制する
+// （agent 1/2/5 → rule-violation 限定、agent 3/4 → rule-violation 禁止）。
 const RULE_AGENTS = new Set([1, 2, 5]);
+
+// category: bug/security/performance はバグ検出系（agent 3,4）由来、rule-violation は
+// ルール準拠・REVIEW.md準拠系（agent 1,2,5）由来。この対応は validateFinding が双方向で
+// 機械的に強制する（agent 3/4 が rule-violation を自己申告しても invalid で弾かれる）。
+// severity は4段（info は入れない）。
+const VALID_CATEGORIES = new Set(["bug", "security", "performance", "rule-violation"]);
+const VALID_SEVERITIES = new Set(["critical", "high", "medium", "low"]);
+
+// category の重要度優先順位（グループ集約で最重要度を選ぶ際に使う）。
+const CATEGORY_PRIORITY = { security: 0, bug: 1, performance: 2 };
+// severity の重大度優先順位（グループ集約で最大深刻度を選ぶ際に使う）。
+const SEVERITY_PRIORITY = { critical: 0, high: 1, medium: 2, low: 3 };
+
+// values のうち priority テーブルで最優先（数値最小）のものを1つ返す。
+// テーブルに無い値は無視する（呼び出し側が事前にスキーマ検証済みのため通常は起こらない）。
+// 該当する値が1つも無ければ undefined を返す（呼び出し側が扱う）。
+function pickTop(values, priority) {
+  let best;
+  for (const v of values) {
+    if (!(v in priority)) continue;
+    if (best === undefined || priority[v] < priority[best]) best = v;
+  }
+  return best;
+}
 
 function validateFinding(f) {
   const errors = [];
@@ -50,6 +78,18 @@ function validateFinding(f) {
     if (!Array.isArray(f.ruleRefs) || f.ruleRefs.length === 0) {
       errors.push("agent 1/2/5 は ruleRefs（非空配列）が必須");
     }
+  }
+  if (!VALID_CATEGORIES.has(f.category)) {
+    errors.push(`category は ${[...VALID_CATEGORIES].join("/")} のいずれかである必要がある`);
+  } else if (RULE_AGENTS.has(f.agent) !== (f.category === "rule-violation")) {
+    errors.push(
+      RULE_AGENTS.has(f.agent)
+        ? "agent 1/2/5 の category は rule-violation である必要がある"
+        : "agent 3/4 の category は rule-violation であってはならない",
+    );
+  }
+  if (!VALID_SEVERITIES.has(f.severity)) {
+    errors.push(`severity は ${[...VALID_SEVERITIES].join("/")} のいずれかである必要がある`);
   }
   return errors;
 }
@@ -180,10 +220,18 @@ function groupFindings(findings) {
   const groups = [];
   const buildGroup = (members, { resolved }) => {
     const kind = members.some((m) => m.kind === "bug") ? "bug" : "rule";
+    // severity: メンバー中の最大深刻度（critical > high > medium > low）。
+    const severity = pickTop(members.map((m) => m.severity), SEVERITY_PRIORITY);
+    // category: kind が bug のグループはメンバーの category のうち最重要度
+    // （security > bug > performance）を採用。rule のグループは rule-violation。
+    const category =
+      kind === "bug" ? pickTop(members.map((m) => m.category), CATEGORY_PRIORITY) : "rule-violation";
     const g = {
       id: `g${groups.length + 1}`,
       path: members[0].path,
       kind,
+      category,
+      severity,
       resolved,
       memberIds: members.map((m) => m.id),
       needsMergeText: members.length >= 2,
@@ -280,6 +328,8 @@ export function processFindings(rawInput, { ctx, diffText, prev = null }) {
         existingCode: raw.existingCode,
         ruleRefs: raw.ruleRefs ?? [],
         kind: deriveKind(raw.agent),
+        category: raw.category,
+        severity: raw.severity,
       };
       // スコープ機械チェック: diff 対象外ファイルへの指摘を機械的に弾く。
       if (!changedSet.has(raw.path) || excludedSet.has(raw.path)) {
@@ -403,6 +453,8 @@ if (
     title: "バグ",
     body: "説明",
     existingCode: "line2",
+    category: "bug",
+    severity: "high",
     ...over,
   });
   const rule = (over) => ({
@@ -412,6 +464,8 @@ if (
     body: "説明",
     existingCode: "line4",
     ruleRefs: ["CLAUDE.md"],
+    category: "rule-violation",
+    severity: "medium",
     ...over,
   });
 
@@ -438,6 +492,38 @@ if (
     const { findings } = run([bug()]);
     assert.equal(findings[0].status, "active");
     assert.deepEqual(findings[0].ruleRefs, []);
+  });
+
+  test("スキーマ検証: category が enum 外は invalid", () => {
+    const { findings, stats } = run([bug({ category: "style" })]);
+    assert.equal(findings[0].status, "invalid");
+    assert.match(findings[0].errors.join(), /category/);
+    assert.equal(stats.invalid, 1);
+  });
+
+  test("スキーマ検証: severity が enum 外は invalid", () => {
+    const { findings } = run([bug({ severity: "info" })]);
+    assert.equal(findings[0].status, "invalid");
+    assert.match(findings[0].errors.join(), /severity/);
+  });
+
+  test("スキーマ検証: agent 1/2/5 は category=rule-violation 以外だと invalid", () => {
+    const { findings } = run([rule({ category: "bug" })]);
+    assert.equal(findings[0].status, "invalid");
+    assert.match(findings[0].errors.join(), /rule-violation/);
+  });
+
+  test("スキーマ検証: agent 3/4 は category=rule-violation を指定できない（invalid）", () => {
+    const { findings } = run([bug({ category: "rule-violation" })]);
+    assert.equal(findings[0].status, "invalid");
+    assert.match(findings[0].errors.join(), /rule-violation/);
+  });
+
+  test("スキーマ検証: agent 3/4 は category に security/performance も指定できる", () => {
+    const { findings } = run([bug({ category: "security" }), bug({ category: "performance", existingCode: "line3" })]);
+    assert.equal(findings[0].status, "active");
+    assert.equal(findings[0].category, "security");
+    assert.equal(findings[1].category, "performance");
   });
 
   test("スコープ: changedFiles 外は out-of-scope", () => {
@@ -512,6 +598,34 @@ if (
     ]);
     assert.equal(groups.length, 1);
     assert.equal(groups[0].kind, "bug");
+  });
+
+  test("グルーピング: severity はメンバー中の最大深刻度を採用", () => {
+    const { groups } = run([
+      bug({ existingCode: "line2", severity: "low" }),
+      bug({ existingCode: "line2\nline3", severity: "critical" }),
+    ]);
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0].severity, "critical");
+  });
+
+  test("グルーピング: bug グループの category はメンバー中の最重要度（security > bug > performance）", () => {
+    const { groups } = run([
+      bug({ existingCode: "line2", category: "performance" }),
+      bug({ existingCode: "line2\nline3", category: "security" }),
+    ]);
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0].category, "security");
+  });
+
+  test("グルーピング: rule グループの category は常に rule-violation", () => {
+    const { groups } = run([
+      rule({ existingCode: "line4" }),
+      rule({ agent: 2, existingCode: "line4" }),
+    ]);
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0].kind, "rule");
+    assert.equal(groups[0].category, "rule-violation");
   });
 
   test("グルーピング: 推移的連結（A-B, B-C なら A-B-C が1グループ）", () => {

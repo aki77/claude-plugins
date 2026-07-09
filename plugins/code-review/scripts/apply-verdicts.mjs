@@ -13,6 +13,8 @@
 //   stdin (JSON): [{ id, verdict: "confirmed"|"rejected", reason }]。
 // 出力(stdout): FINAL 成果物ファイルのパス（1行）。中身は
 //   { issues:[confirmed の issue 全体], rejected:[{id,path,title,reason}], unverified:[id...], stats }
+// confirmed の issue は merge-findings.mjs が転写した category/severity をそのまま保持する
+// （このスクリプトは issue を丸ごと保持するため、コード変更なしで FINAL まで自動的に携行される）。
 import { fileURLToPath } from "node:url";
 import { fail, parseFlags, readArtifact, readInputJsonList, writeArtifact } from "./lib/artifact.mjs";
 
@@ -116,11 +118,17 @@ if (
 
   const doc = {
     issues: [
-      { id: "g1", path: "a.js", title: "T1", kind: "bug", resolved: true },
-      { id: "g2", path: "b.js", title: "T2", kind: "rule", resolved: true },
-      { id: "g3", path: "c.js", title: "T3", kind: "bug", resolved: false },
+      { id: "g1", path: "a.js", title: "T1", kind: "bug", category: "security", severity: "critical", resolved: true },
+      { id: "g2", path: "b.js", title: "T2", kind: "rule", category: "rule-violation", severity: "medium", resolved: true },
+      { id: "g3", path: "c.js", title: "T3", kind: "bug", category: "performance", severity: "low", resolved: false },
     ],
   };
+
+  test("confirmed の issue は category/severity を丸ごと携行する", () => {
+    const r = applyVerdicts(doc, [{ id: "g1", verdict: "confirmed" }]);
+    assert.equal(r.issues[0].category, "security");
+    assert.equal(r.issues[0].severity, "critical");
+  });
 
   test("confirmed のみ issues に残す", () => {
     const r = applyVerdicts(doc, [
