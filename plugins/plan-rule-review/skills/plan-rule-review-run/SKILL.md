@@ -3,6 +3,7 @@ name: plan-rule-review-run
 description: "plan-rule-review フック専用。手動・自動を問わずこのスキル名で明示起動されたときのみ実行する。"
 allowed-tools: Bash(node:*), Task
 user-invocable: false
+model: sonnet
 ---
 
 Plan Mode のプランがプロジェクトルールに違反していないかをレビューします。
