@@ -1,6 +1,6 @@
 {
   "name": "plan-rubocop-review",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "ExitPlanMode 時にプラン本文中の Ruby コードブロックを RuboCop（--stdin）で検証する PreToolUse フックプラグイン。違反があれば deny してプラン内コードの修正を促し、セッションあたり最大 N 回検証する。",
   "author": {
     "name": "aki77",

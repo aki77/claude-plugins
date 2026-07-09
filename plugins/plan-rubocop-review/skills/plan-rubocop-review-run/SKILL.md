@@ -3,6 +3,7 @@ name: plan-rubocop-review-run
 description: "plan-rubocop-review フック専用。手動・自動を問わずこのスキル名で明示起動されたときのみ実行する。"
 allowed-tools: Bash
 user-invocable: false
+model: haiku
 ---
 
 Plan Mode のプラン本文に含まれる **Ruby コードブロック** を、実装着手前に RuboCop（プロジェクトの `.rubocop.yml` 準拠）で検証します。
