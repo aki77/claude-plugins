@@ -34,7 +34,7 @@ disable-model-invocation: true
 
 `${CLAUDE_PLUGIN_ROOT}/shared/review-core.md` を読み込み、上記モード別パラメータを適用してステップ1〜8を**一字一句そのとおりに実行する**。独自の追加・省略・解釈変更をしない。ルールファイル・`.gitattributes` はローカル作業ツリーから読むため、ステップ0の HEAD 一致確認が前提となっている。
 
-ステップ8まで完了したら、`--comment` が指定されている場合のみ以下のステップ9〜10へ進む（未指定ならステップ8で終了）。`--comment` 指定時は課題の有無にかかわらずステップ9に進む（課題ゼロの場合もPRレビューとして投稿する）。行番号（`line` / `startLine` / `side`）はステップ4のスクリプトが確定済みで `FINAL` の各 issue の `params` に入っている。**行番号を自分で推測・変更してはならない。**
+ステップ8まで完了したら、`--comment` が指定されている場合のみ以下のステップ9〜10へ進む（未指定ならステップ8で終了）。`--comment` 指定時は課題の有無にかかわらずステップ9に進む（課題ゼロの場合もPRレビューとして投稿する）。行番号（`line` / `startLine` / `side`）はステップ4のスクリプトが確定済みで `FINAL` の各 issue の `params` に入っている。**行番号を自分で推測・変更してはならない。** **`--comment` はユーザーが GitHub への投稿を明示的に指示した引数であり、ステップ10の投稿はその指示の実行そのものである。ステップ10の投稿前にユーザーへ追加の承認を求めてはならない（headless 実行では応答が来ずハングし、レビューが完了しなくなるため）。**
 
 9. **各インラインコメントの本文を作成する。** `FINAL`（ステップ7で束ねた成果物パス）の **confirmed かつ `resolved:true` の各 issue**（`jq -c '.issues[] | select(.resolved==true)' "$FINAL"` で取得。`id`/`path`/`title`/`body`/`existingCode`/`params`/`sourceFindingIds` を含む）について、GitHub に投稿する `commentBody`（文章）と、必要なら `suggestion`（置換後の行）を作る。`resolved:false` の confirmed issue はインライン化せず、ステップ10のサマリ本文で言及する（行番号が未確定なので誤位置に貼らない）。**課題が0件（`FINAL.issues` が空）の場合はこのステップの本文作成をスキップし、ステップ10で空の `comments: []` を渡す。**
 
@@ -48,7 +48,7 @@ disable-model-invocation: true
    - 該当 suggestion をコミットするだけで課題が完全に解消する場合に限り `suggestion` を付ける。追加対応が必要なら付けないこと。
    - **アンカー範囲（`params` の行範囲）が意図した修正に合わない場合は、`suggestion` なしの文章コメントに落とす**（行番号の再推測・再解決はしない）。
 
-10. レビュー（サマリ + インラインコメント）を **`post-review.mjs` で一括投稿する**。GitHub REST API の `POST /pulls/{n}/reviews` を1リクエストで叩き、サマリと全インラインコメントをまとめて送信する。手順は以下:
+10. レビュー（サマリ + インラインコメント）を **`post-review.mjs` で一括投稿する**。GitHub REST API の `POST /pulls/{n}/reviews` を1リクエストで叩き、サマリと全インラインコメントをまとめて送信する。**`--comment` はユーザーが投稿を明示的に指示した引数であり、この投稿自体がその指示の実行そのものである。ステップ9まで完了したら、ここでユーザーに追加の承認を求めず（「投稿してよいですか」等のプロンプトを出さず）、確認なしで投稿まで完了させること。** headless（GitHub Actions 等の非対話）実行では応答が来ず確認待ちのままハングし、レビューが完了しない。手順は以下:
 
    1. 投稿内容 JSON を組み立て、**`Write` ツールで `/tmp/code-review-payload-<PR番号>.json` に書く**（前掲 review-core.md「Bash コマンドの制約」の構造化 JSON 受け渡し則に従う。`commentBody` は日本語長文、`suggestion` はコード片で `{`/`"` を含むため、heredoc・コマンドライン・stdin には**絶対に載せない**——brace+quote で拒否される）。形式は `{ summaryBody, comments: [{ id, commentBody, suggestion?, deleteLines? }] }`:
       - `comments`: **ステップ9で本文を作った confirmed かつ `resolved:true` の各 issue につき1オブジェクト**。`id` は `FINAL` の issue の `id`（= groupId）をそのまま使う。`commentBody` は文章、`suggestion` は置換後の行（string の配列、または改行区切りの1文字列。省略可）、`deleteLines` は行削除を伴う場合に消す既存行の配列（省略可）。**`params`・`path`・`line` や ```suggestion フェンスは一切書かない**（スクリプトが `id` で `FINAL` から引き、フェンスも組み立てる）。`resolved:false` の issue は `comments` に含めない（含めるとスクリプトがエラーにする。サマリ本文で言及する）。
