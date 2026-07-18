@@ -23,7 +23,9 @@ export function buildPlanModeContext() {
 
 # プランファイル作成時の視覚化ルール
 - 手順・フロー・構成・スケジュールなど、順序や関係が本質の内容はマーメイド図で視覚化する。
-- 比較・列挙は表にする。`;
+- 比較・列挙は表にする。
+- マーメイド図は壊れにくさを優先する: ノードやサブグラフのラベルに \`/ : @ () " <> #\` などの記号や先頭記号が入る場合は必ずダブルクォートで囲む（例: \`A["/code-review:pr-review Skill"]\`）。可能なら記号自体を避け、英数字・スペース・日本語で言い換える。
+- サブグラフは原則使わず、エッジラベルは記号を含まない短い語にする。図が大きく複雑になるなら、無理に1枚に収めず複数の図に分割する。`;
 }
 
 async function main() {
@@ -68,5 +70,6 @@ if (
     assert.ok(context.includes("# プランファイル作成時の視覚化ルール"));
     assert.ok(context.includes("AskUserQuestion"));
     assert.ok(context.includes("マーメイド図"));
+    assert.ok(context.includes("壊れにくさ"));
   });
 }
