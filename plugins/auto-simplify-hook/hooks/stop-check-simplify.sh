@@ -43,6 +43,20 @@ fi
 # gitリポジトリ確認（失敗時はスキップ）
 git -C "$CWD" rev-parse --is-inside-work-tree > /dev/null 2>&1 || exit 0
 
+# 同一セッション内でファイル編集ツールが呼ばれたかを確認（呼ばれていなければスキップ）
+if [[ -n "$TRANSCRIPT" ]] && [[ -f "$TRANSCRIPT" ]]; then
+  EDITED=$(jq -rs '
+    any(.[];
+      ( .message.content[]? | select(.type == "tool_use")
+        | (.name == "Edit" or .name == "Write" or .name == "MultiEdit" or .name == "NotebookEdit") )
+      // ( (.toolUseResult.toolStats.editFileCount // 0) > 0 )
+    )
+  ' "$TRANSCRIPT" 2>/dev/null || echo "false")
+  if [[ "$EDITED" != "true" ]]; then
+    exit 0
+  fi
+fi
+
 # /simplify はコード簡素化が目的のため、ドキュメント・設定・ロック・データ/画像は集計から除外
 EXCLUDES=(
   ':(exclude)*.md' ':(exclude)*.mdx' ':(exclude)*.txt' ':(exclude)*.rst' ':(exclude)*.adoc'
