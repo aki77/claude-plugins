@@ -1,7 +1,7 @@
 {
   "name": "plan-workflow",
   "version": "0.1.0",
-  "description": "Plan モードの運用（要件インタビュー・実装のAgent委譲・モデル振り分け）をUserPromptSubmitで自動注入し、ExitPlanMode の承認ダイアログ直前に transcript から解決したプランファイル（.claude/plans/*.md）を mo（Markdown ビューア）でブラウザに開いて確認できるようにするプラグイン。承認判定には一切干渉しない。プランの視覚化ルール注入は plan-visualize プラグインに分離。",
+  "description": "Plan モードの運用（要件インタビュー・実装のAgent委譲・モデル振り分け）をUserPromptSubmitで自動注入するプラグイン。プランの視覚化ルール注入は plan-visualize プラグインに、ExitPlanMode 承認直前の mo プレビューは plan-preview プラグインにそれぞれ分離。",
   "author": {
     "name": "aki77",
     "email": "aki77@users.noreply.github.com"
@@ -9,13 +9,8 @@
   "keywords": [
     "hooks",
     "user-prompt-submit",
-    "permission-request",
-    "exit-plan-mode",
     "plan-mode",
     "plan-workflow",
-    "orchestration",
-    "markdown",
-    "preview",
-    "mo"
+    "orchestration"
   ]
 }

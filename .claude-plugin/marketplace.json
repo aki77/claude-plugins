@@ -48,12 +48,17 @@
     {
       "name": "plan-workflow",
       "source": "./plugins/plan-workflow",
-      "description": "UserPromptSubmit hook that injects Plan mode operating rules (requirement interview, delegating implementation to Agents, model routing) when permission_mode is plan, plus a PermissionRequest(ExitPlanMode) hook that resolves the plan file from the transcript and opens it in the browser with `mo` (a Markdown viewer) right before the approval dialog appears, without affecting the approval decision"
+      "description": "UserPromptSubmit hook that injects Plan mode operating rules (requirement interview, delegating implementation to Agents, model routing) as additionalContext when permission_mode is plan"
     },
     {
       "name": "plan-visualize",
       "source": "./plugins/plan-visualize",
       "description": "UserPromptSubmit hook that injects plan visualization rules (Mermaid diagrams and tables) as additionalContext when permission_mode is plan, encouraging plans to express flows, structures, and comparisons visually"
+    },
+    {
+      "name": "plan-preview",
+      "source": "./plugins/plan-preview",
+      "description": "PermissionRequest(ExitPlanMode) hook that resolves the plan file from the transcript and opens it in the browser with `mo` (a Markdown viewer) right before the approval dialog appears, without affecting the approval decision"
     }
   ]
 }
