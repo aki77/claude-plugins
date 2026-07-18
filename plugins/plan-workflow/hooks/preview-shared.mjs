@@ -24,9 +24,9 @@ export function deriveProjectName(planFilePath) {
 
 // mo に渡す --target グループ名を決める。
 // プロジェクト名が導出できれば `<project>/<suffix>`、できなければ `<suffix>` のみ。
-// suffix は PLAN_PREVIEW_TARGET が指定されていればそれを優先、未指定なら DEFAULT_TARGET_SUFFIX。
+// suffix は PLAN_WORKFLOW_TARGET が指定されていればそれを優先、未指定なら DEFAULT_TARGET_SUFFIX。
 export function resolveTarget(planFilePath, env = {}) {
-  const override = env.PLAN_PREVIEW_TARGET;
+  const override = env.PLAN_WORKFLOW_TARGET;
   const suffix = override && override.trim() ? override.trim() : DEFAULT_TARGET_SUFFIX;
   const project = deriveProjectName(planFilePath);
   return project ? `${project}/${suffix}` : suffix;
@@ -57,14 +57,14 @@ export function resolvePlanFilePath(transcriptText) {
   return null;
 }
 
-// デバッグログの書き出し先を決める。既定（PLAN_PREVIEW_DEBUG 未設定）は null＝ログ無効。
+// デバッグログの書き出し先を決める。既定（PLAN_WORKFLOW_DEBUG 未設定）は null＝ログ無効。
 export function resolveDebugLogPath(env = {}) {
-  if (!env.PLAN_PREVIEW_DEBUG) return null;
-  const override = env.PLAN_PREVIEW_DEBUG_FILE;
+  if (!env.PLAN_WORKFLOW_DEBUG) return null;
+  const override = env.PLAN_WORKFLOW_DEBUG_FILE;
   if (override && override.trim()) {
     return path.resolve(override.trim());
   }
-  return path.join(os.tmpdir(), "plan-preview-debug.log");
+  return path.join(os.tmpdir(), "plan-workflow-debug.log");
 }
 
 // デバッグログ用の log 関数を作る。resolveDebugLogPath が null を返す（未設定）ときは何もしない no-op。
@@ -124,20 +124,20 @@ if (
     assert.equal(resolveTarget(p, {}), "social-apartment/plans");
   });
 
-  test("resolveTarget: PLAN_PREVIEW_TARGET で suffix を上書き", () => {
+  test("resolveTarget: PLAN_WORKFLOW_TARGET で suffix を上書き", () => {
     const p = "/abs/proj/.claude/plans/x.md";
-    assert.equal(resolveTarget(p, { PLAN_PREVIEW_TARGET: "design" }), "proj/design");
+    assert.equal(resolveTarget(p, { PLAN_WORKFLOW_TARGET: "design" }), "proj/design");
   });
 
   test("resolveTarget: 空文字・空白の suffix は既定 plans にフォールバック", () => {
     const p = "/abs/proj/.claude/plans/x.md";
-    assert.equal(resolveTarget(p, { PLAN_PREVIEW_TARGET: "" }), "proj/plans");
-    assert.equal(resolveTarget(p, { PLAN_PREVIEW_TARGET: "   " }), "proj/plans");
+    assert.equal(resolveTarget(p, { PLAN_WORKFLOW_TARGET: "" }), "proj/plans");
+    assert.equal(resolveTarget(p, { PLAN_WORKFLOW_TARGET: "   " }), "proj/plans");
   });
 
   test("resolveTarget: プロジェクト名が導出できないときは suffix のみ", () => {
     assert.equal(resolveTarget("x.md", {}), "plans");
-    assert.equal(resolveTarget(null, { PLAN_PREVIEW_TARGET: "design" }), "design");
+    assert.equal(resolveTarget(null, { PLAN_WORKFLOW_TARGET: "design" }), "design");
   });
 
   test("resolvePlanFilePath: plan_mode attachment から planFilePath を取り出す", () => {
@@ -194,14 +194,14 @@ if (
   });
 
   test("resolveDebugLogPath: 有効時は temp ディレクトリ", () => {
-    const p = resolveDebugLogPath({ PLAN_PREVIEW_DEBUG: "1" });
+    const p = resolveDebugLogPath({ PLAN_WORKFLOW_DEBUG: "1" });
     assert.ok(p.startsWith(os.tmpdir()));
-    assert.ok(p.endsWith("plan-preview-debug.log"));
+    assert.ok(p.endsWith("plan-workflow-debug.log"));
   });
 
   test("resolveDebugLogPath: DEBUG_FILE 指定を優先", () => {
     assert.equal(
-      resolveDebugLogPath({ PLAN_PREVIEW_DEBUG: "1", PLAN_PREVIEW_DEBUG_FILE: "/var/log/p.log" }),
+      resolveDebugLogPath({ PLAN_WORKFLOW_DEBUG: "1", PLAN_WORKFLOW_DEBUG_FILE: "/var/log/p.log" }),
       "/var/log/p.log"
     );
   });
