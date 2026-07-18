@@ -62,14 +62,6 @@ Plan モードでは、要件インタビューを尽くさない・実装をメ
 - [`plan-visualize`](../plan-visualize) — プランファイル作成時の視覚化ルール（Mermaid 図・表）を注入する。
 - [`plan-preview`](../plan-preview) — `ExitPlanMode` 承認ダイアログ直前に、プランファイルを `mo`（Markdown ビューア）でブラウザに開く。
 
-## 元記事との差分
-
-本プラグインの運用ルール注入は [Plan モードのループを改善する記事](https://zenn.dev/k_yoshiya/articles/claude-code-plan-mode-loop) の手法を踏まえていますが、以下の点で異なります。
-
-- 実装の委譲は `claude --bg` / `claude -p` の別プロセス起動ではなく、Agent ツールへの一本化で行う
-- plan 策定のための調査・設計サブエージェント（Explore / Plan）には opus を使う
-- プラン確定シグナル（`<!-- render -->` マーカー）と HTML render 機構は採用しない。プラン確認は [`plan-preview`](../plan-preview) プラグインの `PermissionRequest(ExitPlanMode)` の mo プレビューで代替しているため不要
-
 ## 注意
 
 - `hooks.json` はセッション起動時に読み込まれるため、プラグインをアップデートしても実行中のセッションには反映されません。反映するには Claude Code を再起動してください。
