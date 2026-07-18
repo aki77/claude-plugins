@@ -1,0 +1,17 @@
+{
+  "description": "ExitPlanMode の承認ダイアログ直前に、transcript から解決したプランファイルを mo でブラウザに開く（判定には干渉しない）",
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/render-plan.mjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
