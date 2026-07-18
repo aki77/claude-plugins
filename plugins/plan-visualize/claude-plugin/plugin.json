@@ -1,0 +1,17 @@
+{
+  "name": "plan-visualize",
+  "version": "0.1.0",
+  "description": "plan モード時に UserPromptSubmit でプランファイルの Mermaid 図・表による視覚化ルールを additionalContext として注入するプラグイン。plan モード以外では何も出力しない。",
+  "author": {
+    "name": "aki77",
+    "email": "aki77@users.noreply.github.com"
+  },
+  "keywords": [
+    "hooks",
+    "user-prompt-submit",
+    "plan-mode",
+    "mermaid",
+    "visualization",
+    "diagram"
+  ]
+}

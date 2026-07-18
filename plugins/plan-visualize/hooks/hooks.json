@@ -1,0 +1,16 @@
+{
+  "description": "plan モード時に UserPromptSubmit でプランの Mermaid 視覚化ルールを注入する",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/inject-rules.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

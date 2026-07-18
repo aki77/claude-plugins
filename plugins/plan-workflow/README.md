@@ -2,7 +2,7 @@
 
 Plan モードの運用を支援する複合プラグインです。2つの独立したフックで構成されます。
 
-1. **Plan モード運用ルール注入**（`UserPromptSubmit`）— Plan モード中の全プロンプトで、要件インタビュー・実装の Agent 委譲・モデル振り分け・プラン視覚化のルールをコンテキストに自動注入する
+1. **Plan モード運用ルール注入**（`UserPromptSubmit`）— Plan モード中の全プロンプトで、要件インタビュー・実装の Agent 委譲・モデル振り分けのルールをコンテキストに自動注入する（プランの視覚化ルールは [`plan-visualize`](../plan-visualize) プラグインに分離）
 2. **プラン確認の mo プレビュー**（`PermissionRequest(ExitPlanMode)`）— 承認ダイアログ直前に、プランファイルを [`mo`](https://github.com/k1LoW/mo)（Markdown ビューア）でブラウザに開く
 
 ## 1. Plan モード運用ルール注入
@@ -13,7 +13,7 @@ Plan モードでは、要件インタビューを尽くさない・実装をメ
 
 1. `UserPromptSubmit` イベントで、フックが stdin から `{ permission_mode, prompt, ... }` を受け取る（matcher なし、全プロンプトで発火）
 2. `permission_mode !== "plan"` なら何も出力せず `exit 0`
-3. `"plan"` のときは、運用ルール＋視覚化ルールの文字列を組み立てて以下の形式で出力する:
+3. `"plan"` のときは、運用ルールの文字列を組み立てて以下の形式で出力する:
    ```json
    { "hookSpecificOutput": { "hookEventName": "UserPromptSubmit", "additionalContext": "<ルール本文>" } }
    ```
@@ -36,11 +36,9 @@ Plan モードでは、要件インタビューを尽くさない・実装をメ
    ための調査・設計サブエージェント（Explore / Plan）には opus を使う。カスタムエージェント
    は model を渡さず frontmatter の定義に任せる。上書きしてよいのは高難度タスクで opus に
    引き上げる場合のみで、sonnet への引き下げ上書きはしない。
-
-# プランファイル作成時の視覚化ルール
-- 手順・フロー・構成・スケジュールなど、順序や関係が本質の内容はマーメイド図で視覚化する。
-- 比較・列挙は表にする。
 ```
+
+> プランファイル作成時の視覚化ルール（Mermaid 図・表）の注入は [`plan-visualize`](../plan-visualize) プラグインに分離しました。視覚化ルールも使いたい場合はそちらを併せてインストールしてください。
 
 ## 2. プラン確認の mo プレビュー
 

@@ -1,0 +1,22 @@
+#!/bin/sh
+# plan モード時に UserPromptSubmit でプランファイルの視覚化ルール（Mermaid 図・表）を
+# additionalContext として注入する。plan モード以外は何も出力せず exit 0。
+set -eu
+
+payload=$(cat)
+mode=$(printf '%s' "$payload" | jq -r '.permission_mode // empty' 2>/dev/null || true)
+[ "$mode" = "plan" ] || exit 0
+
+# 視覚化ルール本文。Mermaid 例に含まれるバックティック・記号を保持するため
+# クォート付きヒアドキュメント（<<'EOF'）で変数展開・コマンド置換を無効化する。
+context=$(cat <<'EOF'
+# プランファイル作成時の視覚化ルール
+- 手順・フロー・構成・スケジュールなど、順序や関係が本質の内容はマーメイド図で視覚化する。
+- 比較・列挙は表にする。
+- マーメイド図は壊れにくさを優先する: ノードやサブグラフのラベルに `/ : @ () " <> #` などの記号や先頭記号が入る場合は必ずダブルクォートで囲む（例: `A["/code-review:pr-review Skill"]`）。可能なら記号自体を避け、英数字・スペース・日本語で言い換える。
+- サブグラフは原則使わず、エッジラベルは記号を含まない短い語にする。図が大きく複雑になるなら、無理に1枚に収めず複数の図に分割する。
+EOF
+)
+
+jq -n --arg ctx "$context" \
+  '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $ctx}}'
