@@ -92,6 +92,27 @@ Claude Code 用のカスタムプラグインコレクションです。
 
 詳細は [plugins/plan-archive](plugins/plan-archive) を参照してください。
 
+### plan-workflow
+
+Plan モードの運用ルール（要件インタビュー・実装の Agent 委譲・モデル振り分け・プランの視覚化）を `UserPromptSubmit` で自動注入し、`ExitPlanMode` の承認ダイアログ直前にプランファイルを `mo`（Markdown ビューア）でブラウザ表示するプラグインです。承認判定には一切干渉しません。
+
+**動作の仕組み:**
+- `UserPromptSubmit` フックが `permission_mode` を確認し、`"plan"` のときだけ運用ルール（インタビュー徹底・実装の Agent 委譲・モデル振り分け）と視覚化ルール（マーメイド図・表）を `additionalContext` として注入（通常モードは副作用ゼロ）
+- `PermissionRequest`（`ExitPlanMode`）フックが承認ダイアログ表示直前に発火し、transcript の `plan_mode` attachment から `planFilePath` を解決
+- `mo <planFilePath> --target <project>/plans --open` でプランを GitHub-flavored Markdown としてブラウザ表示（プロジェクトごとにグループを分離）
+- どちらのフックも承認可否の JSON 判定を返さず `exit 0`。プランの承認フローには一切関与しない
+
+**前提条件:**
+- `node` が `PATH` に存在すること
+- `mo`（[k1LoW/mo](https://github.com/k1LoW/mo)、`brew install k1LoW/tap/mo`）が `PATH` に存在すること（プレビュー機能のみ。未インストール時はフックが素通しし、承認フローに影響しない）
+
+**設定:**
+- `PLAN_WORKFLOW_TARGET` — mo の `--target` グループ名の末尾セグメント（デフォルト：`plans`、実グループ名は `<project>/<この値>`）
+- `PLAN_WORKFLOW_DEBUG` — 真の値でステップログを出力（デフォルト：無効）
+- `PLAN_WORKFLOW_DEBUG_FILE` — デバッグログの出力先（デフォルト：`<tmpdir>/plan-workflow-debug.log`）
+
+詳細は [plugins/plan-workflow](plugins/plan-workflow) を参照してください。
+
 ### auto-simplify-hook
 
 変更行数が10行以上あり、かつ現在のセッションで `/simplify` が実行されていない場合に Claude の停止をブロックするプラグインです。タスク完了前にコードのシンプル化を促します。
