@@ -155,40 +155,6 @@ Plan モードでプランファイルを作成する際の視覚化ルール（
 
 詳細は [plugins/auto-simplify-hook](plugins/auto-simplify-hook) を参照してください。
 
-### code-review
-
-CLAUDE.md準拠・バグ検出・REVIEW.md準拠の観点から多角的なコードレビューを行うプラグインです。GitHub PRとローカルブランチの2つのスキルを提供します。
-
-#### `/code-review:pr-review` — GitHub PRレビュー
-
-**動作の仕組み:**
-- `/code-review:pr-review <PR番号>` で起動
-- `gh pr diff` でPRの変更内容を取得し、関連するプロジェクトルール（CLAUDE.md / `.claude/rules/`）を収集
-- PRタイトル・説明文・コミットメッセージ本文からサマリを生成し、変更のWHYをコンテキストとしてエージェントに渡す
-- 5つのエージェントを並列起動してレビュー（CLAUDE.md準拠×2・バグ検出×2・REVIEW.md準拠×1）
-- 各エージェントが検出した課題をサブエージェントで検証し、誤検知を除去
-- `--comment` オプション指定時はGitHub Pending Review形式でインラインコメントを投稿
-
-**前提条件:**
-- `gh` CLI が `PATH` に存在し、GitHubに認証済みであること
-- GitHub MCP サーバーが設定済みであること（`--comment` 使用時）
-
-#### `/code-review:local-review` — ローカルブランチレビュー
-
-PR作成前のローカルブランチ変更を対象にレビューします。
-
-**動作の仕組み:**
-- `/code-review:local-review [<range>]` で起動（例: `/code-review:local-review main`）
-- 引数省略時はブランチ設定から base を自動解決（`github-pr-base-branch` → `vscode-merge-base` → `@{upstream}` → `origin/HEAD` の順）
-- `git diff <range>` で差分を取得。コミットメッセージ本文も参照して変更のWHYをコンテキストに反映
-- レビューロジックは `pr-review` と同等（5エージェント並列 + 検証）
-- GitHub投稿は行わず、ターミナルへのサマリ出力のみ
-
-**前提条件:**
-- `git` が `PATH` に存在すること
-
-詳細は [plugins/code-review](plugins/code-review) を参照してください。
-
 ### compact-handoff
 
 `PreCompact` と `SessionStart(compact)` の2フックで、圧縮（コンパクション）時に標準の要約が落としがちな判断の経緯（却下した選択肢、未実行の手順上の約束、今後を縛る制約など）を `claude -p` に抽出させ、次の会話に `additionalContext` として注入するプラグインです。
