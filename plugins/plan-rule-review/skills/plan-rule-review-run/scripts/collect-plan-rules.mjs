@@ -6,6 +6,11 @@ import path from "node:path";
 // プランから本体が抽出した「変更対象ファイルパス」を引数で受け取り、
 // それらに該当する CLAUDE.md / .claude/rules/ のパス一覧だけを JSON で出力する。
 // gh pr diff には依存しない（プラン段階では確定した diff が存在しないため）。
+//
+// グローバルルール（ルート直下の CLAUDE.md、および .claude/rules/ で paths 未指定＝
+// 全ファイル適用のルール）は常に除外する。これらは確実に読み込み済みでプランに反映されて
+// いる可能性が高く、レビューが無駄になりやすいため。出力はディレクトリ階層由来の CLAUDE.md と、
+// paths が変更対象ファイルに一致した paths 指定ルールのみ。
 const changedFiles = process.argv
   .slice(2)
   .map((s) => s.trim())
@@ -24,9 +29,6 @@ const cwd = process.cwd();
 
 function collectClaudeMd(files) {
   const results = new Set();
-  if (existsSync(path.join(cwd, "CLAUDE.md"))) {
-    results.add("CLAUDE.md");
-  }
   for (const file of files) {
     let dir = path.dirname(file);
     while (dir && dir !== "." && dir !== "/") {
@@ -114,12 +116,10 @@ async function collectRules(files) {
   const results = [];
   for (const file of ruleFiles) {
     const content = readFileSync(path.join(cwd, file), "utf8");
+    // paths 未指定（null）・空配列はグローバル扱いで除外し、
+    // paths 指定かつ変更対象ファイルに一致したものだけを含める。
     const paths = parseFrontmatterPaths(content);
-    if (paths === null) {
-      results.push({ path: file, paths: null });
-    } else if (paths.length === 0) {
-      continue;
-    } else if (anyChangedFileMatches(paths, files)) {
+    if (paths && paths.length > 0 && anyChangedFileMatches(paths, files)) {
       results.push({ path: file, paths });
     }
   }
