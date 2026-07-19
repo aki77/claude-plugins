@@ -1,7 +1,7 @@
 {
   "name": "plan-workflow",
-  "version": "0.1.0",
-  "description": "Plan モードの運用（要件インタビュー・実装のAgent委譲・モデル振り分け）をUserPromptSubmitで自動注入するプラグイン。プランの視覚化ルール注入は plan-visualize プラグインに、ExitPlanMode 承認直前の mo プレビューは plan-preview プラグインにそれぞれ分離。",
+  "version": "0.2.0",
+  "description": "Plan モードの運用（要件インタビュー・実装のAgent委譲・モデル振り分け）をUserPromptSubmitで自動注入するプラグイン。Stop フックで plan 起点セッションのみ /simplify を促す。プランの視覚化ルール注入は plan-visualize プラグインに、ExitPlanMode 承認直前の mo プレビューは plan-preview プラグインにそれぞれ分離。",
   "author": {
     "name": "aki77",
     "email": "aki77@users.noreply.github.com"
@@ -11,6 +11,8 @@
     "user-prompt-submit",
     "plan-mode",
     "plan-workflow",
-    "orchestration"
+    "orchestration",
+    "stop",
+    "simplify"
   ]
 }

@@ -100,9 +100,10 @@ Plan モードの運用ルール（要件インタビュー・実装の Agent �
 - `UserPromptSubmit` フックが `permission_mode` を確認し、`"plan"` のときだけ運用ルール（妥当性検証・インタビュー徹底・実装の Agent 委譲・モデル振り分け）を `additionalContext` として注入（通常モードは副作用ゼロ）
 - 妥当性検証ルールには、依頼・プランの過剰実装や不要スコープのチェックに加え、大規模な実装をフェーズ分割してドキュメント化してから進める方針を含む
 - `exit 0` で返し、プランの承認フローには一切関与しない
+- Stop フックが、plan モード起点（`ExitPlanMode` 承認済み）のセッションでのみ、コード変更が10行以上あり `/simplify` 未実行なら Stop をブロックして `/simplify` を促す（doc・設定・lock・画像ファイルは変更行数の集計から除外）
 
 **前提条件:**
-- `jq` が `PATH` に存在すること
+- `jq` と `git` が `PATH` に存在すること
 
 詳細は [plugins/plan-workflow](plugins/plan-workflow) を参照してください。
 
@@ -138,22 +139,6 @@ Plan モードでプランファイルを作成する際の視覚化ルール（
 - `PLAN_WORKFLOW_DEBUG_FILE` — デバッグログの出力先（デフォルト：`<tmpdir>/plan-workflow-debug.log`）
 
 詳細は [plugins/plan-preview](plugins/plan-preview) を参照してください。
-
-### auto-simplify-hook
-
-変更行数が10行以上あり、かつ現在のセッションで `/simplify` が実行されていない場合に Claude の停止をブロックするプラグインです。タスク完了前にコードのシンプル化を促します。
-
-**動作の仕組み:**
-- Stop フックが `git diff HEAD --numstat` で変更行数（追加 + 削除）をカウント
-- 変更が10行以上かつトランスクリプトに `/simplify` が見つからない場合、`decision: block` を返す
-- 無限ループを防ぐため `stop_hook_active` が `true` の場合はスキップ
-- git 管理外のディレクトリではスキップ
-
-**前提条件:**
-- `jq` が `PATH` に存在すること
-- `git` が `PATH` に存在すること
-
-詳細は [plugins/auto-simplify-hook](plugins/auto-simplify-hook) を参照してください。
 
 ### compact-handoff
 

@@ -12,49 +12,23 @@ fi
 # 必要なフィールドを取得
 TRANSCRIPT=$(printf '%s' "$INPUT" | jq -r '.transcript_path // ""')
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // "."')
-SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.session_id // ""')
-
-# セッション単位の無効化チェック（/toggle session off、TTL 24時間）
-SESSIONS_FILE="${CLAUDE_PLUGIN_DATA:-}/sessions.json"
-if [[ -n "${CLAUDE_PLUGIN_DATA:-}" ]] && [[ -n "$SESSION_ID" ]] && [[ -f "$SESSIONS_FILE" ]]; then
-  NOW_MS=$(($(date +%s) * 1000))
-  SESSION_DISABLED=$(jq -r --arg sid "$SESSION_ID" --argjson now "$NOW_MS" '
-    (.[$sid] // {}) as $entry
-    | if ($entry.disabled == true) and (($now - ($entry.ts // 0)) < 86400000)
-      then "true" else "false" end
-  ' "$SESSIONS_FILE" 2>/dev/null || echo "false")
-  if [[ "$SESSION_DISABLED" == "true" ]]; then
-    exit 0
-  fi
-fi
 
 # cwdが無効な場合はスキップ
 [[ -z "$CWD" ]] && exit 0
 
-# プロジェクト単位の無効化チェック（/toggle project off）
-PROJECTS_FILE="${CLAUDE_PLUGIN_DATA:-}/projects.json"
-if [[ -n "${CLAUDE_PLUGIN_DATA:-}" ]] && [[ -f "$PROJECTS_FILE" ]]; then
-  PROJECT_DISABLED=$(jq -r --arg cwd "$CWD" '(.[$cwd].enabled == false)' "$PROJECTS_FILE" 2>/dev/null || echo "false")
-  if [[ "$PROJECT_DISABLED" == "true" ]]; then
-    exit 0
-  fi
-fi
-
 # gitリポジトリ確認（失敗時はスキップ）
 git -C "$CWD" rev-parse --is-inside-work-tree > /dev/null 2>&1 || exit 0
 
-# 同一セッション内でファイル編集ツールが呼ばれたかを確認（呼ばれていなければスキップ）
-if [[ -n "$TRANSCRIPT" ]] && [[ -f "$TRANSCRIPT" ]]; then
-  EDITED=$(jq -rs '
-    any(.[];
-      ( .message.content[]? | select(.type == "tool_use")
-        | (.name == "Edit" or .name == "Write" or .name == "MultiEdit" or .name == "NotebookEdit") )
-      // ( (.toolUseResult.toolStats.editFileCount // 0) > 0 )
-    )
-  ' "$TRANSCRIPT" 2>/dev/null || echo "false")
-  if [[ "$EDITED" != "true" ]]; then
-    exit 0
-  fi
+# plan モード起点セッション限定: トランスクリプトに ExitPlanMode の tool_use が
+# 存在しなければスキップ（transcript が空/不在なら plan 起点と判定できずスキップ）
+[[ -z "$TRANSCRIPT" ]] && exit 0
+[[ -f "$TRANSCRIPT" ]] || exit 0
+# まず grep で ExitPlanMode を含む行に絞ってから jq で tool_use を厳密判定する
+# （トランスクリプト全体を jq で舐めるのを避けつつ、文字列一致だけの誤検知も防ぐ）
+if ! grep -F 'ExitPlanMode' "$TRANSCRIPT" | jq -es '
+  any(.[]; .message.content[]? | select(.type == "tool_use") | .name == "ExitPlanMode")
+' > /dev/null 2>&1; then
+  exit 0
 fi
 
 # /simplify はコード簡素化が目的のため、ドキュメント・設定・ロック・データ/画像は集計から除外

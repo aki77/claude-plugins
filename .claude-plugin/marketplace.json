@@ -16,11 +16,6 @@
       "description": "Plugin that makes path-based rules in .claude/rules/ and CLAUDE.md apply on file creation (Write), not only on Read"
     },
     {
-      "name": "auto-simplify-hook",
-      "source": "./plugins/auto-simplify-hook",
-      "description": "Stop hook that blocks completion when there are 10+ changed lines and /simplify has not been run"
-    },
-    {
       "name": "package-manager-enforcer",
       "source": "./plugins/package-manager-enforcer",
       "description": "Plugin that blocks mismatched package manager commands by detecting the correct package manager from package.json packageManager field or lock files"
@@ -48,7 +43,7 @@
     {
       "name": "plan-workflow",
       "source": "./plugins/plan-workflow",
-      "description": "UserPromptSubmit hook that injects Plan mode operating rules (requirement interview, delegating implementation to Agents, model routing) as additionalContext when permission_mode is plan"
+      "description": "UserPromptSubmit hook that injects Plan mode operating rules (requirement interview, delegating implementation to Agents, model routing) as additionalContext when permission_mode is plan, plus a Stop hook that nudges /simplify only for sessions that started in Plan mode"
     },
     {
       "name": "plan-visualize",
