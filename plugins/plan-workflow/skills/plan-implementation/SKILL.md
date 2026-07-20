@@ -2,6 +2,7 @@
 name: plan-implementation
 description: "プランに記載がある場合、実装着手時に参照する運用ルール。"
 user-invocable: false
+allowed-tools: Bash(sh:*)
 ---
 
 Plan モードで承認されたプランの実装フェーズで、このセッションが必ず適用する運用ルール。
@@ -22,7 +23,7 @@ ExitPlanMode 承認後、メインセッションではファイル編集・実�
 
 ## 実装後のレビュー
 
-設定されたレビュースキル: !`echo "${PLAN_REVIEW_SKILL:-}"`
+設定されたレビュースキル: !`sh "${CLAUDE_PLUGIN_ROOT}/skills/plan-implementation/scripts/print-review-skill.sh"`
 
 `/simplify` 完了後、上記「設定されたレビュースキル」を確認する。空ならレビュー工程は行わずそのまま完了報告に進む。非空なら、その値をスキル呼び出し（`/code-review` のようなスラッシュコマンド）または指示文としてそのまま実行し、結果を検収してから完了報告に進む。これはシェルコマンドではないので Bash では実行しない。この工程も変更全体を対象とするため、全体文脈を持つメインセッションで実行する（「実行の委譲」節の例外に該当）。
 

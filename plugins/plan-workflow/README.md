@@ -60,7 +60,9 @@ Plan モードでは、要件インタビューを尽くさない・実装をメ
 
 実装フェーズ完了後の `/simplify` 実行は [`plan-implementation`](skills/plan-implementation/SKILL.md) スキルの手順に含まれます。以前は `Stop` フックで機械的に促していましたが、`/simplify` の後段に別処理（レビュー等）を差し込む拡張を見据え、状態を持てず順序制御が難しいフック方式から、一連の流れを表現できるスキル手順方式へ移しました。
 
-環境変数 `PLAN_REVIEW_SKILL` にレビュースキル名（例 `/code-review`。引数付きや自然文の指示も可）を設定すると、その値が `/simplify` 完了後に実行されます。未設定・空ならスキップされます。実行対象はスキル呼び出し（スラッシュコマンド）であってシェルコマンドではありません。値の取得には Claude Code スキルの動的コンテキスト注入（`` !`command` `` 構文）を使い、スキルロード時に一度だけ `echo "${PLAN_REVIEW_SKILL:-}"` を評価して確定値を本文に注入します。Claude が Bash で環境変数を読み直すのではなく確定済みの値を受け取るため、挙動が安定します。
+環境変数 `PLAN_REVIEW_SKILL` にレビュースキル名（例 `/code-review`。引数付きや自然文の指示も可）を設定すると、その値が `/simplify` 完了後に実行されます。未設定・空ならスキップされます。実行対象はスキル呼び出し（スラッシュコマンド）であってシェルコマンドではありません。値の取得には Claude Code スキルの動的コンテキスト注入（`` !`command` `` 構文）を使い、スキルロード時に一度だけ同梱スクリプト `skills/plan-implementation/scripts/print-review-skill.sh` を実行して確定値を本文に注入します。Claude が Bash で環境変数を読み直すのではなく確定済みの値を受け取るため、挙動が安定します。
+
+動的注入コマンドには 2 つの制約があり、それを避けるためにラッパースクリプトを介しています。(1) `echo "${PLAN_REVIEW_SKILL:-}"` のように `${...}` 展開を含むコマンドは許可チェックが「Contains expansion」として拒否する。(2) `printenv PLAN_REVIEW_SKILL` は未設定時に終了コード 1 を返し、動的注入がそれを「Shell command failed」と扱ってスキル読込ごと失敗させる。スクリプト内で `printf '%s' "${PLAN_REVIEW_SKILL:-}"` を実行し常に終了コード 0 で終わることで両方を回避し、SKILL.md の frontmatter で `allowed-tools: Bash(sh:*)` を許可しています。
 
 ## インストール
 
