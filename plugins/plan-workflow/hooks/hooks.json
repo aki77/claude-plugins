@@ -1,6 +1,18 @@
 {
-  "description": "Plan モード運用ルールを UserPromptSubmit で注入し、Stop フックで plan 起点セッションのみ /simplify を促す",
+  "description": "Plan モード運用ルールを UserPromptSubmit で注入し、Stop フックで plan 起点セッションのみ /simplify を促す。ExitPlanMode では PreToolUse prompt フックがプランに plan-implementation スキルの記載があるか判定する",
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "ExitPlanMode のプラン本文（$TOOL_INPUT の plan フィールド）を読み、実装フェーズ用スキルの記載有無だけを検問してください。プランの内容の是非はレビューしません。\n\n判定手順:\n1. そのプランがコード変更・ファイル編集・実装作業を伴う計画か判定する。\n2. 分岐:\n   - 実装を伴わない（調査・情報収集・質問への回答のみの）計画 → allow。plan-implementation スキルは実装フェーズ専用のため記載は不要。\n   - 実装を伴う計画で、プラン本文に「実装は plan-implementation スキルに従う」旨の記載がある → allow。\n   - 実装を伴う計画なのに、その記載がない → deny。\n3. 記載があれば必ず allow する（追記されれば次回は通る設計。無限ループを避けるため記載の有無のみで判定する）。\n\n出力:\n- allow のとき: permissionDecision を allow にする。\n- deny のとき: permissionDecision を deny にし、reason に『プラン本文に「実装は plan-implementation スキルに従う」の一文を追記して、再度 ExitPlanMode を呼んでください』と返す。",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

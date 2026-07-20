@@ -43,7 +43,7 @@
     {
       "name": "plan-workflow",
       "source": "./plugins/plan-workflow",
-      "description": "UserPromptSubmit hook that injects Plan mode operating rules (requirement interview, delegating implementation to Agents, model routing) as additionalContext when permission_mode is plan, plus a Stop hook that nudges /simplify only for sessions that started in Plan mode"
+      "description": "UserPromptSubmit hook that injects Plan-drafting operating rules (requirement interview, model routing for drafting sub-agents, noting the plan-implementation skill) as additionalContext when permission_mode is plan, a PreToolUse(ExitPlanMode) prompt hook that checks whether an implementation plan references the plan-implementation skill and denies to prompt adding it if missing, plus a Stop hook that nudges /simplify only for sessions that started in Plan mode. Implementation-phase rules (delegating to Agents, model routing, no unsolicited commits) now live in the plan-implementation skill."
     },
     {
       "name": "plan-visualize",
