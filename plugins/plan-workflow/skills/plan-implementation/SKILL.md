@@ -1,6 +1,6 @@
 ---
 name: plan-implementation
-description: "Plan モード承認後の実装フェーズ運用ルール。実装の Agent 委譲・実装エージェントのモデル振り分け・無断コミット禁止を定める。プランに plan-implementation の記載があるセッションの実装着手時に参照する。"
+description: "プランに記載がある場合、実装着手時に参照する運用ルール。"
 user-invocable: false
 ---
 
