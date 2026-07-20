@@ -1,7 +1,7 @@
 {
   "name": "plan-workflow",
   "version": "0.2.0",
-  "description": "Plan モードの運用（要件インタビュー・策定サブエージェントのモデル振り分け）をUserPromptSubmitで自動注入するプラグイン。実装フェーズの運用ルール（実行の委譲・実装エージェントのモデル振り分け・コミット禁止）は plan-implementation スキルに分離し、ExitPlanMode の PreToolUse prompt フックでプランに記載があるかを判定して記載を促す。プランの視覚化ルール注入は plan-visualize プラグインに、ExitPlanMode 承認直前の mo プレビューは plan-preview プラグインにそれぞれ分離。",
+  "description": "Plan モードの運用（要件インタビュー・策定サブエージェントのモデル振り分け）をUserPromptSubmitで自動注入するプラグイン。実装フェーズの運用ルール（実行の委譲・実装エージェントのモデル振り分け・コミット禁止）は plan-implementation スキルに分離し、ExitPlanMode の PreToolUse prompt フックでプランに記載があるかを判定して記載を促す。プランの視覚化ルール注入は plan-visualize プラグインに、ExitPlanMode 承認直前の mo プレビューは plan-preview プラグインにそれぞれ分離。環境変数 PLAN_REVIEW_SKILL で指定したレビュースキルを /simplify 後に実行する機能も備える。",
   "author": {
     "name": "aki77",
     "email": "aki77@users.noreply.github.com"
@@ -15,6 +15,7 @@
     "orchestration",
     "skill",
     "stop",
-    "simplify"
+    "simplify",
+    "review"
   ]
 }

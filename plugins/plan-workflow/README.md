@@ -1,6 +1,6 @@
 # plan-workflow
 
-Plan モードの運用ルール（要件インタビュー・策定サブエージェントのモデル振り分け）を、`UserPromptSubmit` フックでコンテキストに自動注入するプラグインです。あわせて `ExitPlanMode` の `PreToolUse` prompt フックで、プランに実装フェーズ用スキル（`plan-implementation`）の記載があるかを判定し、記載を促します。実装後の `/simplify` 実行は、`plan-implementation` スキルの手順に含まれます。
+Plan モードの運用ルール（要件インタビュー・策定サブエージェントのモデル振り分け）を、`UserPromptSubmit` フックでコンテキストに自動注入するプラグインです。あわせて `ExitPlanMode` の `PreToolUse` prompt フックで、プランに実装フェーズ用スキル（`plan-implementation`）の記載があるかを判定し、記載を促します。実装後の `/simplify` 実行と、それに続く任意のレビューコマンド実行は、`plan-implementation` スキルの手順に含まれます。
 
 Plan モードでは、要件インタビューを尽くさない・実装をメインセッションで直接行ってしまう・モデル振り分けが場当たり的になる、といった運用のブレが起きがちです。このプラグインは `UserPromptSubmit` フックで `permission_mode` を確認し、`"plan"` のときだけ plan 策定用の運用ルールを `additionalContext` として注入します。**Plan モード以外（通常モード）では何も出力せず副作用ゼロ**です。
 
@@ -59,6 +59,8 @@ Plan モードでは、要件インタビューを尽くさない・実装をメ
 ## 実装後の `/simplify`
 
 実装フェーズ完了後の `/simplify` 実行は [`plan-implementation`](skills/plan-implementation/SKILL.md) スキルの手順に含まれます。以前は `Stop` フックで機械的に促していましたが、`/simplify` の後段に別処理（レビュー等）を差し込む拡張を見据え、状態を持てず順序制御が難しいフック方式から、一連の流れを表現できるスキル手順方式へ移しました。
+
+環境変数 `PLAN_REVIEW_SKILL` にレビュースキル名（例 `/code-review`。引数付きや自然文の指示も可）を設定すると、その値が `/simplify` 完了後に実行されます。未設定・空ならスキップされます。実行対象はスキル呼び出し（スラッシュコマンド）であってシェルコマンドではありません。値の取得には Claude Code スキルの動的コンテキスト注入（`` !`command` `` 構文）を使い、スキルロード時に一度だけ `echo "${PLAN_REVIEW_SKILL:-}"` を評価して確定値を本文に注入します。Claude が Bash で環境変数を読み直すのではなく確定済みの値を受け取るため、挙動が安定します。
 
 ## インストール
 
