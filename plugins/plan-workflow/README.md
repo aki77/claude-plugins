@@ -1,10 +1,10 @@
 # plan-workflow
 
-Plan モードの運用ルール（要件インタビュー・策定サブエージェントのモデル振り分け）を、`UserPromptSubmit` フックでコンテキストに自動注入するプラグインです。あわせて `ExitPlanMode` の `PreToolUse` prompt フックで、プランに実装フェーズ用スキル（`plan-implementation`）の記載があるかを判定し、記載を促します。さらに `Stop` フックで、plan 起点セッションの実装後に `/simplify` の実行を促します。
+Plan モードの運用ルール（要件インタビュー・策定サブエージェントのモデル振り分け）を、`UserPromptSubmit` フックでコンテキストに自動注入するプラグインです。あわせて `ExitPlanMode` の `PreToolUse` prompt フックで、プランに実装フェーズ用スキル（`plan-implementation`）の記載があるかを判定し、記載を促します。実装後の `/simplify` 実行は、`plan-implementation` スキルの手順に含まれます。
 
 Plan モードでは、要件インタビューを尽くさない・実装をメインセッションで直接行ってしまう・モデル振り分けが場当たり的になる、といった運用のブレが起きがちです。このプラグインは `UserPromptSubmit` フックで `permission_mode` を確認し、`"plan"` のときだけ plan 策定用の運用ルールを `additionalContext` として注入します。**Plan モード以外（通常モード）では何も出力せず副作用ゼロ**です。
 
-**実装フェーズの運用ルール（実行の委譲・実装エージェントのモデル振り分け・コミット禁止）は [`plan-implementation`](skills/plan-implementation/SKILL.md) スキルに分離しています。** `UserPromptSubmit` はプラン策定中にのみ関わるため、承認後の実装フェーズでしか効かないルールをここに含めるとコンテキストを圧迫します。スキルは自動ロードが保証されないため、`inject-rules.sh` はプラン本文に「実装は `plan-implementation` スキルに従う」旨を明記するよう促し、さらに `ExitPlanMode` の `PreToolUse` prompt フックが記載の有無を検問します（詳細は後述）。
+**実装フェーズの運用ルール（実行の委譲・実装エージェントのモデル振り分け・実装後の `/simplify` 実行・コミット禁止）は [`plan-implementation`](skills/plan-implementation/SKILL.md) スキルに分離しています。** `UserPromptSubmit` はプラン策定中にのみ関わるため、承認後の実装フェーズでしか効かないルールをここに含めるとコンテキストを圧迫します。スキルは自動ロードが保証されないため、`inject-rules.sh` はプラン本文に「実装は `plan-implementation` スキルに従う」旨を明記するよう促し、さらに `ExitPlanMode` の `PreToolUse` prompt フックが記載の有無を検問します（詳細は後述）。
 
 > プランの視覚化ルール（Mermaid 図・表）の注入は [`plan-visualize`](../plan-visualize) プラグインに、`ExitPlanMode` 承認ダイアログ直前のプランファイル mo プレビューは [`plan-preview`](../plan-preview) プラグインに、それぞれ分離しています。併用したい場合はそちらも合わせてインストールしてください。
 
@@ -42,7 +42,7 @@ Plan モードでは、要件インタビューを尽くさない・実装をメ
    （実行の委譲・実装エージェントのモデル振り分け・コミット禁止）は同スキルが保持する。
 ```
 
-実装フェーズの運用ルール（実行の委譲・実装エージェントのモデル振り分け・コミット禁止）は [`plan-implementation`](skills/plan-implementation/SKILL.md) スキルの本文を参照してください。
+実装フェーズの運用ルール（実行の委譲・実装エージェントのモデル振り分け・実装後の `/simplify` 実行・コミット禁止）は [`plan-implementation`](skills/plan-implementation/SKILL.md) スキルの本文を参照してください。
 
 ## PreToolUse(ExitPlanMode) prompt フック
 
@@ -56,21 +56,9 @@ Plan モードでは、要件インタビューを尽くさない・実装をメ
 
 **既知の制限**: prompt フックはセッション状態を持たないため、command フック + `sessions.json` のような確実な回数上限（無限ループ防止のための呼び出し回数管理）は設けられません。実用上は、Claude が deny の reason に従って1回の追記で再送するため無限ループにはなりにくいですが、理論上は繰り返し deny される可能性がある点に留意してください。
 
-## Stop フックによる `/simplify` 促し
+## 実装後の `/simplify`
 
-セッションが応答を終える（`Stop`）たびに、command フック（[`check-simplify.sh`](hooks/check-simplify.sh)）が実装後のコードに対して `/simplify` の実行を促します。plan 起点セッションでは実装量が多くなりがちで、簡素化の一手間が省かれやすいため、Stop のタイミングで検問します。
-
-以下を **すべて満たすときだけ** `decision: block` を返し、reason で `/simplify` の実行を促します（いずれかを満たさなければ `exit 0` で何もしません）。
-
-1. `stop_hook_active` が `true` でない（block による再帰ループの防止）
-2. `cwd` が git リポジトリである
-3. **plan 起点セッションである**: トランスクリプトに `ExitPlanMode` の `tool_use` が存在する（`grep` で該当行に絞ってから `jq` で厳密判定。存在しなければ plan 起点ではないとみなしスキップ）
-4. **コード変更が 10 行以上ある**: `git diff --numstat` の追加＋削除行数の合計で判定。`/simplify` はコード簡素化が目的のため、ドキュメント（`.md` 等）・設定（`.yml`/`.json`/`.toml` 等）・ロックファイル・データ（`.csv` 等）・画像（`.png` 等）は集計から除外する
-5. **まだ `/simplify` を実行していない**: トランスクリプトに `/simplify` の文字列が含まれていない
-
-条件 3 により、通常モードで始まったセッションや調査のみのセッションでは発火しません。**plan 起点セッションに限定**することで副作用を抑えています。
-
-**既知の制限**: 条件 5 はトランスクリプト全文の文字列一致で判定するため、会話中に別文脈で `/simplify` に言及しただけでも「実行済み」とみなしてスキップします。
+実装フェーズ完了後の `/simplify` 実行は [`plan-implementation`](skills/plan-implementation/SKILL.md) スキルの手順に含まれます。以前は `Stop` フックで機械的に促していましたが、`/simplify` の後段に別処理（レビュー等）を差し込む拡張を見据え、状態を持てず順序制御が難しいフック方式から、一連の流れを表現できるスキル手順方式へ移しました。
 
 ## インストール
 

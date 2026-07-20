@@ -1,5 +1,5 @@
 {
-  "description": "Plan モード運用ルールを UserPromptSubmit で注入し、Stop フックで plan 起点セッションのみ /simplify を促す。ExitPlanMode では PreToolUse prompt フックがプランに plan-implementation スキルの記載があるか判定する",
+  "description": "Plan モード運用ルールを UserPromptSubmit で注入する。ExitPlanMode では PreToolUse prompt フックがプランに plan-implementation スキルの記載があるか判定する",
   "hooks": {
     "PreToolUse": [
       {
@@ -19,18 +19,6 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/inject-rules.sh",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-simplify.sh",
             "timeout": 10
           }
         ]
