@@ -67,6 +67,11 @@ function findProjectRoot(start) {
   }
 }
 
+export function isUnderCwd(cwd, absTarget) {
+  const rel = path.relative(cwd, absTarget);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
 export function globToRegExp(pattern) {
   let re = "";
   let i = 0;
@@ -164,6 +169,7 @@ async function main() {
 
   const cwd = payload.cwd || process.cwd();
   const absTarget = path.resolve(cwd, filePath);
+  if (!isUnderCwd(cwd, absTarget)) process.exit(0);
 
   let stat;
   try {
@@ -290,5 +296,21 @@ if (
   test("globToRegExp: 先頭・末尾がアンカーされ部分一致しない", () => {
     const re = globToRegExp("foo.ts");
     assert.equal(re.test("xfoo.tsx"), false);
+  });
+
+  test("isUnderCwd: cwd 配下のファイルは true", () => {
+    assert.equal(isUnderCwd("/proj", "/proj/a.txt"), true);
+  });
+
+  test("isUnderCwd: cwd 自身は true", () => {
+    assert.equal(isUnderCwd("/proj", "/proj"), true);
+  });
+
+  test("isUnderCwd: cwd 外のファイルは false", () => {
+    assert.equal(isUnderCwd("/proj", "/tmp/test.txt"), false);
+  });
+
+  test("isUnderCwd: 兄弟ディレクトリは false", () => {
+    assert.equal(isUnderCwd("/proj", "/sibling/x"), false);
   });
 }
