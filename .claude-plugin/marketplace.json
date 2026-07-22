@@ -54,6 +54,11 @@
       "name": "plan-preview",
       "source": "./plugins/plan-preview",
       "description": "PermissionRequest(ExitPlanMode) hook that resolves the plan file from the transcript and opens it in the browser with `mo` (a Markdown viewer) right before the approval dialog appears, without affecting the approval decision"
+    },
+    {
+      "name": "permission-gate",
+      "source": "./plugins/permission-gate",
+      "description": "PermissionRequest hook (all tools) that asks `claude -p` (haiku) to judge each pending operation against natural-language allow rules the user writes in ~/.claude/permission-gate.md and <project>/.claude/permission-gate.md, auto-approving only clear matches and falling back to the normal confirmation dialog on anything undecidable, on errors, or on timeout"
     }
   ]
 }

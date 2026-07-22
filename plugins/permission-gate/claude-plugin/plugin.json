@@ -1,0 +1,17 @@
+{
+  "name": "permission-gate",
+  "version": "0.1.0",
+  "description": "PermissionRequest フックで claude -p(haiku) に判定させ、ユーザーが ~/.claude/permission-gate.md と <project>/.claude/permission-gate.md に自然言語で書いた許可ルールに合致する操作だけを自動許可するプラグイン。判定不能・エラー・タイムアウトは従来の確認ダイアログにフォールバックする。",
+  "author": {
+    "name": "aki77",
+    "email": "aki77@users.noreply.github.com"
+  },
+  "keywords": [
+    "hooks",
+    "permission-request",
+    "claude-p",
+    "auto-approve",
+    "haiku",
+    "natural-language-rules"
+  ]
+}

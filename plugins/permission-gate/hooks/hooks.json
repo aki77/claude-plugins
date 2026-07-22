@@ -1,0 +1,17 @@
+{
+  "description": "全ツールの許可ダイアログ直前に claude -p(haiku) でユーザーの自然言語許可ルールに合致するか判定し、合致した操作だけ自動許可する（それ以外は従来の確認ダイアログにフォールバック）",
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/gate.mjs",
+            "timeout": 25
+          }
+        ]
+      }
+    ]
+  }
+}
