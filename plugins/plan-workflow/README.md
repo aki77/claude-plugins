@@ -1,10 +1,10 @@
 # plan-workflow
 
-Plan モードの運用ルール（要件インタビュー・策定サブエージェントのモデル振り分け）を、`UserPromptSubmit` フックでコンテキストに自動注入するプラグインです。あわせて `ExitPlanMode` の `PreToolUse` prompt フックで、プランに実装フェーズ用スキル（`plan-implementation`）の記載があるかを判定し、記載を促します。実装後の `/simplify` 実行と、それに続く任意のレビューコマンド実行は、`plan-implementation` スキルの手順に含まれます。
+Plan モードの運用ルール（要件インタビュー・策定サブエージェントのモデル振り分け）を、`UserPromptSubmit` フックでコンテキストに自動注入するプラグインです。あわせて `ExitPlanMode` の `PreToolUse` command フックで、プランに実装フェーズ用スキル（`plan-implementation`）の記載があるかを判定し、記載を促します。実装後の `/simplify` 実行と、それに続く任意のレビューコマンド実行は、`plan-implementation` スキルの手順に含まれます。
 
 Plan モードでは、要件インタビューを尽くさない・実装をメインセッションで直接行ってしまう・モデル振り分けが場当たり的になる、といった運用のブレが起きがちです。このプラグインは `UserPromptSubmit` フックで `permission_mode` を確認し、`"plan"` のときだけ plan 策定用の運用ルールを `additionalContext` として注入します。**Plan モード以外（通常モード）では何も出力せず副作用ゼロ**です。
 
-**実装フェーズの運用ルール（実行の委譲・実装エージェントのモデル振り分け・実装後の `/simplify` 実行・コミット禁止）は [`plan-implementation`](skills/plan-implementation/SKILL.md) スキルに分離しています。** `UserPromptSubmit` はプラン策定中にのみ関わるため、承認後の実装フェーズでしか効かないルールをここに含めるとコンテキストを圧迫します。スキルは自動ロードが保証されないため、`inject-rules.sh` はプラン本文に「実装は `plan-implementation` スキルに従う」旨を明記するよう促し、さらに `ExitPlanMode` の `PreToolUse` prompt フックが記載の有無を検問します（詳細は後述）。
+**実装フェーズの運用ルール（実行の委譲・実装エージェントのモデル振り分け・実装後の `/simplify` 実行・コミット禁止）は [`plan-implementation`](skills/plan-implementation/SKILL.md) スキルに分離しています。** `UserPromptSubmit` はプラン策定中にのみ関わるため、承認後の実装フェーズでしか効かないルールをここに含めるとコンテキストを圧迫します。スキルは自動ロードが保証されないため、`inject-rules.sh` はプラン本文に「実装は `plan-implementation` スキルに従う」旨を明記するよう促し、さらに `ExitPlanMode` の `PreToolUse` command フックが記載の有無を検問します（詳細は後述）。
 
 > プランの視覚化ルール（Mermaid 図・表）の注入は [`plan-visualize`](../plan-visualize) プラグインに、`ExitPlanMode` 承認ダイアログ直前のプランファイル mo プレビューは [`plan-preview`](../plan-preview) プラグインに、それぞれ分離しています。併用したい場合はそちらも合わせてインストールしてください。
 
@@ -44,17 +44,18 @@ Plan モードでは、要件インタビューを尽くさない・実装をメ
 
 実装フェーズの運用ルール（実行の委譲・実装エージェントのモデル振り分け・実装後の `/simplify` 実行・コミット禁止）は [`plan-implementation`](skills/plan-implementation/SKILL.md) スキルの本文を参照してください。
 
-## PreToolUse(ExitPlanMode) prompt フック
+## PreToolUse(ExitPlanMode) command フック
 
-`ExitPlanMode` が呼ばれるたびに、`PreToolUse` の prompt フックがプラン本文（`$TOOL_INPUT` の `plan`）を LLM に読ませ、次を判定します。
+`ExitPlanMode` が呼ばれるたびに、`PreToolUse` の command フック（`hooks/check-plan-skill.mjs`）がプラン本文（`tool_input.plan`）を検査し、次を判定します。
 
-- 実装（コード変更・ファイル編集）を伴わない計画（調査・情報収集のみ等）なら、記載の有無にかかわらず allow。
-- 実装を伴う計画で、プラン本文に「実装は `plan-implementation` スキルに従う」旨の記載があれば allow。
-- 実装を伴う計画なのにその記載がなければ deny し、reason で「記載を追記して再度 ExitPlanMode を呼べ」と促す。
+- プラン本文に「実装は `plan-implementation` スキルに従う」旨の記載があれば allow。
+- 記載がなければ deny し、reason で「記載を追記して再度 ExitPlanMode を呼べ」と促す。
 
-この判定は**マーカー行（`<!-- -->` 等）の機械的な includes 判定ではなく、LLM がプラン本文を読んで文脈から判断する方式**です。マーカーという人工物をプランに残さず、「実装は `plan-implementation` スキルに従う」という自然文だけで通ります。
+マーカー行（`<!-- -->` 等）という人工物はプランに残さず、「実装は `plan-implementation` スキルに従う」という自然文だけで通ります。照合前に markdown 装飾（`**bold**`・`` `code` ``）と空白を除去して正規化するため、`実装は **plan-implementation スキルに従う**。` や `` 実装は `plan-implementation` スキルに従う。 `` のような表記揺れも許容します。
 
-**既知の制限**: prompt フックはセッション状態を持たないため、command フック + `sessions.json` のような確実な回数上限（無限ループ防止のための呼び出し回数管理）は設けられません。実用上は、Claude が deny の reason に従って1回の追記で再送するため無限ループにはなりにくいですが、理論上は繰り返し deny される可能性がある点に留意してください。
+判定は「一文の有無」だけなので、実装の有無を問わずすべてのプランに記載を求めます。調査のみの計画にも一文が必要になりますが、機械的判定に倒すことで後述の誤判定リスクを避けています。
+
+**以前は prompt フック（LLM 判定）でしたが、command フックに変更しました。** prompt フックはプラン本文を `$TOOL_INPUT` でプロンプトに展開する方式のため、1万字級のプランでは記載が判定モデルに届かず、**一文が実在するのに deny され続けて先に進めなくなる**事象が発生しました（実測: 13,000 字のプランで3回連続 deny）。判定内容が文字列の有無だけである以上、LLM 判定は不要であり、command フックのほうが速く・確実です。副次的に、`node --test` によるインラインテストで表記揺れの回帰を検証できるようになりました（`NODE_TEST_CONTEXT=1 node hooks/check-plan-skill.mjs`）。
 
 ## 実装後の `/simplify`
 
