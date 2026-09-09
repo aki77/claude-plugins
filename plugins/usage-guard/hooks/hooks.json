@@ -1,0 +1,38 @@
+{
+  "description": "Claude のサブスク枠（5時間枠・週次枠）の消費率を監視し、閾値超過時に UserPromptSubmit と PostToolBatch でモデル呼び出しを停止する（dry-run では警告のみ）。使用量は OAuth 使用量エンドポイントから取得してキャッシュし、SessionStart では失効したアクセストークンの更新とキャッシュ更新を非同期で行う",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/refresh.mjs",
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}

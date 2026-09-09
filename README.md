@@ -163,6 +163,26 @@ Plan モードでプランファイルを作成する際の視覚化ルール（
 
 詳細は [plugins/compact-handoff](plugins/compact-handoff) を参照してください。
 
+### usage-guard
+
+`UserPromptSubmit` と `PostToolBatch` の2フックで、Claude のサブスクリプション枠（5時間枠・週次枠）の消費率を監視し、設定した閾値を超えたら次のモデル呼び出しを止めるプラグインです。無人で回すエージェントループが、気づかないうちに使用量クレジットを消費し尽くすのを防ぎます。保証ではなく自衛用の速度制限であり、実行中のターンそのものを止めることはできません。
+
+**動作の仕組み:**
+- `UserPromptSubmit` フックと `PostToolBatch` フックが、それぞれのタイミングで現在の使用率を確認
+- 使用量は OAuth 使用量エンドポイント（`api.anthropic.com/api/oauth/usage`）から取得し、プラグイン専用のデータディレクトリ（`${CLAUDE_PLUGIN_DATA}`）の `cache.json` にキャッシュ（既定 TTL：60秒）。このエンドポイントは推論クォータを消費しない
+- 認証は Claude Code が保存済みの OAuth トークンを再利用（macOS は Keychain、フォールバックは `~/.claude/.credentials.json`）。API キーの設定は不要
+- 5時間枠・週次枠のいずれかが閾値を超えた場合、`mode` が `enforce` なら次のモデル呼び出しを停止する。`dry-run` なら停止せず、`UserPromptSubmit` では画面に警告を出し、`PostToolBatch` では（毎バッチ通知になるのを避けるため）ログにのみ記録する
+- 時限バイパスを設定すると、一定時間だけ停止判定を無効化できる
+
+**前提条件:**
+- `node` が `PATH` に存在すること
+- 使用量エンドポイントが応答するアカウント（Pro / Max / Team シート）であること
+
+**設定:**
+- `~/.claude/usage-guard.json` — `mode`: `off` / `dry-run`（既定）/ `enforce`。ユーザーが編集する設定はここ、キャッシュ等の状態ファイルは `${CLAUDE_PLUGIN_DATA}` 配下に分離している
+
+詳細は [plugins/usage-guard](plugins/usage-guard) を参照してください。
+
 ## インストール
 
 ### 前提条件

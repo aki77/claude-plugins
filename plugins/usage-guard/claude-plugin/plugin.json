@@ -1,0 +1,17 @@
+{
+  "name": "usage-guard",
+  "version": "0.1.0",
+  "description": "UserPromptSubmit と PostToolBatch フックで Claude のサブスク枠（5時間枠・週次枠）の消費率を監視し、閾値を超えたら次のモデル呼び出しを停止して、気づかないうちに使用量クレジットが消費されるのを防ぐプラグイン。使用量は OAuth 使用量エンドポイントから取得しキャッシュし、dry-run / enforce モードと時限バイパスに対応する。",
+  "author": {
+    "name": "aki77",
+    "email": "aki77@users.noreply.github.com"
+  },
+  "keywords": [
+    "hooks",
+    "user-prompt-submit",
+    "post-tool-batch",
+    "rate-limit",
+    "usage-guard",
+    "cost-control"
+  ]
+}

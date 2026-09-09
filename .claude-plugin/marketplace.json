@@ -59,6 +59,11 @@
       "name": "permission-gate",
       "source": "./plugins/permission-gate",
       "description": "PermissionRequest hook (all tools) that asks `claude -p` (haiku) to judge each pending operation against natural-language allow rules the user writes in ~/.claude/permission-gate.md and <project>/.claude/permission-gate.md, auto-approving only clear matches and falling back to the normal confirmation dialog on anything undecidable, on errors, or on timeout"
+    },
+    {
+      "name": "usage-guard",
+      "source": "./plugins/usage-guard",
+      "description": "UserPromptSubmit and PostToolBatch hooks that track the account's 5-hour and 7-day subscription usage windows and halt the agentic loop before the next model call once a configured threshold is crossed, so unattended automation can't silently burn usage credits; usage is read from the OAuth usage endpoint and cached, with dry-run/enforce modes and a time-boxed bypass"
     }
   ]
 }
