@@ -80,5 +80,4 @@ flowchart TD
 
 ## 関連プラグイン
 
-- [`plan-preview`](../plan-preview) — 同じ `PermissionRequest` フックを使い、ExitPlanMode の承認ダイアログ直前にプランファイルをブラウザで開く（判定には干渉しない）。
 - [`compact-handoff`](../compact-handoff) — 本プラグインと同じ `claude -p`（別プロセスの Claude）呼び出し方式を採用している。

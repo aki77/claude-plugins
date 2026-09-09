@@ -94,7 +94,7 @@ Claude Code 用のカスタムプラグインコレクションです。
 
 ### plan-workflow
 
-Plan モードの運用ルール（要件インタビュー・実装の Agent 委譲・モデル振り分け・依頼とプランの妥当性検証）を `UserPromptSubmit` で自動注入するプラグインです。プランの視覚化ルールは [plan-visualize](#plan-visualize)、`ExitPlanMode` 承認直前の mo プレビューは [plan-preview](#plan-preview) にそれぞれ分離されており、併用したい場合はそちらも合わせてインストールしてください。
+Plan モードの運用ルール（要件インタビュー・実装の Agent 委譲・モデル振り分け・依頼とプランの妥当性検証）を `UserPromptSubmit` で自動注入するプラグインです。プランの視覚化ルールは [plan-visualize](#plan-visualize) に分離されており、併用したい場合はそちらも合わせてインストールしてください。
 
 **動作の仕組み:**
 - `UserPromptSubmit` フックが `permission_mode` を確認し、`"plan"` のときだけ運用ルール（妥当性検証・インタビュー徹底・実装の Agent 委譲・モデル振り分け）を `additionalContext` として注入（通常モードは副作用ゼロ）
@@ -119,26 +119,6 @@ Plan モードでプランファイルを作成する際の視覚化ルール（
 - `jq` が `PATH` に存在すること
 
 詳細は [plugins/plan-visualize](plugins/plan-visualize) を参照してください。
-
-### plan-preview
-
-`ExitPlanMode` の承認ダイアログが表示される直前に、プランファイルを `mo`（Markdown ビューア）でブラウザ表示するプラグインです。承認判定には一切干渉しません。
-
-**動作の仕組み:**
-- `PermissionRequest`（`ExitPlanMode`）フックが承認ダイアログ表示直前に発火し、transcript の `plan_mode` attachment から `planFilePath` を解決
-- `mo <planFilePath> --target <project>/plans --open` でプランを GitHub-flavored Markdown としてブラウザ表示（プロジェクトごとにグループを分離）
-- JSON の承認可否判定を返さず `exit 0`。プランの承認フローには一切関与しない
-
-**前提条件:**
-- `node` が `PATH` に存在すること
-- `mo`（[k1LoW/mo](https://github.com/k1LoW/mo)、`brew install k1LoW/tap/mo`）が `PATH` に存在すること（未インストール時はフックが素通しし、承認フローに影響しない）
-
-**設定:**
-- `PLAN_WORKFLOW_TARGET` — mo の `--target` グループ名の末尾セグメント（デフォルト：`plans`、実グループ名は `<project>/<この値>`）
-- `PLAN_WORKFLOW_DEBUG` — 真の値でステップログを出力（デフォルト：無効）
-- `PLAN_WORKFLOW_DEBUG_FILE` — デバッグログの出力先（デフォルト：`<tmpdir>/plan-workflow-debug.log`）
-
-詳細は [plugins/plan-preview](plugins/plan-preview) を参照してください。
 
 ### compact-handoff
 

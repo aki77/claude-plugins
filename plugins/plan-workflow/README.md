@@ -6,7 +6,7 @@ Plan モードでは、要件インタビューを尽くさない・実装をメ
 
 **実装フェーズの運用ルール（実行の委譲・実装エージェントのモデル振り分け・実装後の `/simplify` 実行・コミット禁止）は [`plan-implementation`](skills/plan-implementation/SKILL.md) スキルに分離しています。** `UserPromptSubmit` はプラン策定中にのみ関わるため、承認後の実装フェーズでしか効かないルールをここに含めるとコンテキストを圧迫します。スキルは自動ロードが保証されないため、`inject-rules.sh` はプラン本文に「実装は `plan-implementation` スキルに従う」旨を明記するよう促し、さらに `ExitPlanMode` の `PreToolUse` command フックが記載の有無を検問します（詳細は後述）。
 
-> プランの視覚化ルール（Mermaid 図・表）の注入は [`plan-visualize`](../plan-visualize) プラグインに、`ExitPlanMode` 承認ダイアログ直前のプランファイル mo プレビューは [`plan-preview`](../plan-preview) プラグインに、それぞれ分離しています。併用したい場合はそちらも合わせてインストールしてください。
+> プランの視覚化ルール（Mermaid 図・表）の注入は [`plan-visualize`](../plan-visualize) プラグインに分離しています。併用したい場合はそちらも合わせてインストールしてください。
 
 ## しくみ（UserPromptSubmit）
 
@@ -79,7 +79,6 @@ Plan モードでは、要件インタビューを尽くさない・実装をメ
 ## 関連プラグイン
 
 - [`plan-visualize`](../plan-visualize) — プランファイル作成時の視覚化ルール（Mermaid 図・表）を注入する。
-- [`plan-preview`](../plan-preview) — `ExitPlanMode` 承認ダイアログ直前に、プランファイルを `mo`（Markdown ビューア）でブラウザに開く。
 
 ## 注意
 
