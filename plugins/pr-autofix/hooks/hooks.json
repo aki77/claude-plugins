@@ -1,0 +1,17 @@
+{
+  "description": "gh pr create / gh pr ready が成功し PR が draft でないとき、claude --cloud でクラウドセッションをバックグラウンド起動して PR の Auto-fix を有効化させる（PR ごとに1回だけ）",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/pr-autofix.mjs",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

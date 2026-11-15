@@ -1,0 +1,18 @@
+{
+  "name": "pr-autofix",
+  "version": "0.1.0",
+  "description": "PostToolUse(Bash) フックで、ローカルの Claude Code が gh pr create / gh pr ready に成功し PR が draft でないとき、claude --cloud でクラウドセッションをバックグラウンド起動し、その PR の Auto-fix（CI 失敗・レビューコメントへの自動対応）を有効化させるプラグイン。PR ごとに1回だけ起動し、リポジトリの .claude/pr-autofix.json でモデルと追加指示を指定できる。",
+  "author": {
+    "name": "aki77",
+    "email": "aki77@users.noreply.github.com"
+  },
+  "keywords": [
+    "hooks",
+    "post-tool-use",
+    "bash",
+    "github",
+    "pull-request",
+    "autofix",
+    "cloud"
+  ]
+}

@@ -59,6 +59,11 @@
       "name": "usage-guard",
       "source": "./plugins/usage-guard",
       "description": "UserPromptSubmit and PostToolBatch hooks that track the account's 5-hour and 7-day subscription usage windows and halt the agentic loop before the next model call once a configured threshold is crossed, so unattended automation can't silently burn usage credits; usage is read from the OAuth usage endpoint and cached, with dry-run/enforce modes and a time-boxed bypass"
+    },
+    {
+      "name": "pr-autofix",
+      "source": "./plugins/pr-autofix",
+      "description": "PostToolUse(Bash) hook that, after `gh pr create` or `gh pr ready` succeeds for a non-draft PR, launches a cloud session in the background via `claude --cloud` (permission mode auto) and asks it to enable Auto-fix for that PR, so CI failures and review comments are handled without relaying them by hand; launches at most once per PR using a lock in the git common dir, with an optional model and extra instructions read from the repository's .claude/pr-autofix.json"
     }
   ]
 }

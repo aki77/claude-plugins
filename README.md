@@ -163,6 +163,26 @@ Plan モードでプランファイルを作成する際の視覚化ルール（
 
 詳細は [plugins/usage-guard](plugins/usage-guard) を参照してください。
 
+### pr-autofix
+
+`PostToolUse(Bash)` フックで、ローカルの Claude Code が `gh pr create` / `gh pr ready` に成功したとき、その PR を担当するクラウドセッションを `claude --cloud` で起動し、Auto-fix（CI の失敗やレビューコメントへの自動対応）を有効化させるプラグインです。レビュー指摘を人間が読んで AI に伝え直す中継の手間をなくします。
+
+**動作の仕組み:**
+- コマンドに `gh pr create` / `gh pr ready` を含む Bash の実行後に、`gh pr view` で現在のブランチの PR を取得し、draft でなければ対象にする
+- PR ごとに `<git-common-dir>/pr-autofix-<PR番号>` のロックを取り、1回だけ起動する（worktree 間でも共有）
+- `claude --permission-mode auto --cloud <依頼文>` をバックグラウンドで起動し、フック自体はすぐ返る。出力はロック横の `.log` に記録
+- 起動が異常終了したときだけロックを消して再試行できるようにする。成功時と 120 秒のタイムアウト時はロックを残す（二重起動を防ぐため）
+- クラウドセッション内（`CLAUDE_CODE_REMOTE=true`）では何もしない
+
+**前提条件:**
+- `node` / `git` / `gh` / `claude` / `script` が `PATH` に存在し、`gh` が認証済みであること
+- リポジトリに Claude GitHub App がインストールされ、クラウドセッションが利用できること
+
+**設定:**
+- `.claude/pr-autofix.json`（リポジトリ、省略可） — `model`: クラウドセッションのモデル（指定時のみ `--model` を付ける）、`instructions`: 依頼文の末尾に付ける追加指示
+
+詳細は [plugins/pr-autofix](plugins/pr-autofix) を参照してください。
+
 ## インストール
 
 ### 前提条件
