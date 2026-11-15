@@ -6,6 +6,10 @@
 
 PR を出したあと、CI の失敗やレビュー指摘を人間が読んで AI に伝え直す「中継」の手間が残ります。Claude Code のクラウドセッションには PR を監視して自動で修正・push する Auto-fix があるので、PR を出した直後にそれを起動すれば中継は不要になります。
 
+### 組み込みの `/autofix-pr` を使わない理由
+
+組み込みの `/autofix-pr [prompt]` は、対話モードのターミナル版でしか使えません。VSCode 拡張ではコマンドの一覧に出てこず、`claude -p "/autofix-pr ..."` では `/autofix-pr isn't available in this environment.` になります（2026-11 時点で確認）。プラグインの mod から `$.command.run` で呼ぶ方法も、VSCode 拡張では `$.command.list()` に `autofix-pr` が出てこないため使えません。どの環境でも動かすため、このプラグインは `claude --cloud` でクラウドセッションを起動し、Auto-fix の有効化を依頼文で頼んでいます。
+
 ## しくみ
 
 `PostToolUse(Bash)` フックが判定とロックの取得までを同期で行い、`systemMessage` で通知してすぐに返ります。`claude --cloud` の起動は、同じスクリプトを launcher モードで detached 起動した子プロセスが担います。
