@@ -84,6 +84,20 @@ flowchart TD
 
 ファイルが JSON として読めない、または値の型が不正なときは、クラウドセッションを起動せず `systemMessage` で警告します。
 
+### クラウド環境の指定
+
+クラウドセッションを起動する環境は、このプラグインの設定ではなく、Claude Code の設定 `remote.defaultEnvironmentId` で決まります。`claude --cloud` はリポジトリの直下を cwd にして起動するため、そのリポジトリの `.claude/settings.local.json` に書けば、そのリポジトリだけに効きます。
+
+```json
+{
+  "remote": { "defaultEnvironmentId": "env_01..." }
+}
+```
+
+- 値には環境の名前ではなく ID（`env_...`。セルフホストのランナープールなら `ccpool_...`）を書く。名前を書くとどの環境とも一致せず、エラーも警告も出ないまま既定の環境（一覧の先頭）で起動する
+- ID は対話セッションの `/remote-env` の一覧で確認できる。環境を選ぶと `Set default remote environment to <名前> (env_...)` と表示される
+- `/remote-env` で選ぶと、ID はユーザー設定（`~/.claude/settings.json`）に書かれ、`settings.local.json` の `remote.defaultEnvironmentId` は削除される。リポジトリごとに分けたい場合は、表示された ID を `settings.local.json` に書き戻し、ユーザー設定の値は元に戻す
+
 ## 動作確認
 
 実際にクラウドセッションが起動するため、試してよいリポジトリで行ってください。
